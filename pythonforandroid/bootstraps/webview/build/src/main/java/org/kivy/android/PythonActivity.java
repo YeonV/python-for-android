@@ -1,3 +1,6 @@
+// This file should be placed in your FORKED python-for-android repository at:
+// python-for-android/pythonforandroid/bootstraps/webview/build/src/main/java/org/kivy/android/PythonActivity.java
+
 package org.kivy.android;
 
 import android.os.SystemClock;
@@ -28,6 +31,7 @@ import android.widget.ImageView;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.webkit.WebSettings; // Added for more settings access
 
 import android.widget.AbsoluteLayout;
 import android.view.ViewGroup.LayoutParams;
@@ -38,6 +42,15 @@ import android.webkit.WebView;
 import android.webkit.CookieManager;
 import android.net.Uri;
 
+// *** ADDED IMPORTS ***
+import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
+import android.webkit.DownloadListener;
+import android.os.Environment;
+import android.app.DownloadManager;
+import android.os.Build; // For version checks in onPermissionRequest
+import java.util.Arrays; // For logging arrays
+
 import org.renpy.android.ResourceManager;
 
 public class PythonActivity extends Activity {
@@ -45,7 +58,7 @@ public class PythonActivity extends Activity {
     // PythonActivity in the SDL2 bootstrap, but removing all the SDL2
     // specifics.
 
-    private static final String TAG = "PythonActivity";
+    private static final String TAG = "PythonActivityLedFxMod"; // Changed TAG slightly for clarity
 
     public static PythonActivity mActivity = null;
     public static boolean mOpenExternalLinksInBrowser = false;
@@ -68,9 +81,6 @@ public class PythonActivity extends Activity {
     }
 
     public String getEntryPoint(String search_dir) {
-        /* Get the main file (.pyc|.py) depending on if we
-         * have a compiled version or not.
-        */
         List<String> entryPoints = new ArrayList<String>();
         entryPoints.add("main.pyc");  // python 3 compiled files
         for (String value : entryPoints) {
@@ -83,8 +93,6 @@ public class PythonActivity extends Activity {
     }
 
     public static void initialize() {
-        // The static nature of the singleton and Android quirkyness force us to initialize everything here
-        // Otherwise, when exiting the app and returning to it, these variables *keep* their pre exit values
         mWebView = null;
         mLayout = null;
         mBrokenLibraries = false;
@@ -92,11 +100,11 @@ public class PythonActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Log.v(TAG, "My oncreate running");
+        Log.v(TAG, "Custom PythonActivity onCreate running");
         resourceManager = new ResourceManager(this);
         super.onCreate(savedInstanceState);
 
-        this.mActivity = this;
+        PythonActivity.mActivity = this; // Set static mActivity to this instance
         this.showLoadingScreen();
         new UnpackFilesTask().execute(getAppRoot());
     }
@@ -105,23 +113,21 @@ public class PythonActivity extends Activity {
         @Override
         protected String doInBackground(String... params) {
             File app_root_file = new File(params[0]);
-            Log.v(TAG, "Ready to unpack");
-            PythonUtil.unpackAsset(mActivity, "private", app_root_file, true);
-            PythonUtil.unpackPyBundle(mActivity, getApplicationInfo().nativeLibraryDir + "/" + "libpybundle", app_root_file, false);
+            Log.v(TAG, "UnpackFilesTask: Ready to unpack");
+            PythonUtil.unpackAsset(PythonActivity.mActivity, "private", app_root_file, true);
+            PythonUtil.unpackPyBundle(PythonActivity.mActivity, PythonActivity.mActivity.getApplicationInfo().nativeLibraryDir + "/" + "libpybundle", app_root_file, false);
             return null;
         }
 
         @Override
         protected void onPostExecute(String result) {
-            Log.v("Python", "Device: " + android.os.Build.DEVICE);
-            Log.v("Python", "Model: " + android.os.Build.MODEL);
+            Log.v(TAG, "UnpackFilesTask: onPostExecute. Device: " + android.os.Build.DEVICE + ", Model: " + android.os.Build.MODEL);
 
-            PythonActivity.initialize();
+            PythonActivity.initialize(); // Static initialize
 
-            // Load shared libraries
             String errorMsgBrokenLib = "";
             try {
-                loadLibraries();
+                PythonActivity.this.loadLibraries(); // Call instance method
             } catch(UnsatisfiedLinkError e) {
                 System.err.println(e.getMessage());
                 mBrokenLibraries = true;
@@ -132,8 +138,7 @@ public class PythonActivity extends Activity {
                 errorMsgBrokenLib = e.getMessage();
             }
 
-            if (mBrokenLibraries)
-            {
+            if (mBrokenLibraries) {
                 AlertDialog.Builder dlgAlert  = new AlertDialog.Builder(PythonActivity.mActivity);
                 dlgAlert.setMessage("An error occurred while trying to load the application libraries. Please try again and/or reinstall."
                       + System.getProperty("line.separator")
@@ -144,162 +149,321 @@ public class PythonActivity extends Activity {
                     new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog,int id) {
-                            // if this button is clicked, close current activity
                             PythonActivity.mActivity.finish();
                         }
                     });
                dlgAlert.setCancelable(false);
                dlgAlert.create().show();
-
                return;
             }
 
-            // Set up the webview
-            String app_root_dir = getAppRoot();
-
+            Log.d(TAG, "Setting up WebView...");
             mWebView = new WebView(PythonActivity.mActivity);
-            mWebView.getSettings().setJavaScriptEnabled(true);
-            mWebView.getSettings().setDomStorageEnabled(true);
-            mWebView.loadUrl("file:///android_asset/_load.html");
+            WebSettings webSettings = mWebView.getSettings();
+            webSettings.setJavaScriptEnabled(true);
+            webSettings.setDomStorageEnabled(true);
+            webSettings.setMediaPlaybackRequiresUserGesture(false); // Crucial for camera/mic
+            webSettings.setAllowFileAccess(true); // For file:///android_asset/ and other file access
+            webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+            webSettings.setAllowContentAccess(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                 // Allow mixed content (HTTP in HTTPS) - use with caution if loading external sites
+                 // For localhost, this is usually fine.
+                webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            }
+
 
             mWebView.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
+            
             mWebView.setWebViewClient(new WebViewClient() {
-                    @Override
-                    public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                        Uri u = Uri.parse(url);
-                        if (mOpenExternalLinksInBrowser) {
-                            if (!(u.getScheme().equals("file") || u.getHost().equals("127.0.0.1"))) {
-                                Intent i = new Intent(Intent.ACTION_VIEW, u);
-                                startActivity(i);
-                                return true;
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    Uri u = Uri.parse(url);
+                    Log.d(TAG, "WebViewClient: shouldOverrideUrlLoading: " + url + " | mOpenExternalLinksInBrowser: " + PythonActivity.mOpenExternalLinksInBrowser);
+
+                    String scheme = u.getScheme();
+                    String host = u.getHost();
+
+                    if ( (scheme != null && scheme.equals("file")) ||
+                         (host != null && (host.equals("127.0.0.1") || host.equals("localhost"))) ) {
+                        Log.d(TAG, "WebViewClient: Letting WebView handle local/internal URL: " + url);
+                        return false; 
+                    }
+
+                    if (PythonActivity.mOpenExternalLinksInBrowser && (scheme != null && (scheme.equals("http") || scheme.equals("https"))) ) {
+                        Log.d(TAG, "WebViewClient: Opening external link in browser: " + url);
+                        try {
+                            Intent intent = new Intent(Intent.ACTION_VIEW, u);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); 
+                            PythonActivity.mActivity.startActivity(intent);
+                            return true; 
+                        } catch (Exception e) {
+                            Log.e(TAG, "WebViewClient: Could not open external link: " + url, e);
+                            Toast.makeText(PythonActivity.mActivity, "Could not open link", Toast.LENGTH_SHORT).show();
+                            return true; 
+                        }
+                    }
+                    
+                    try {
+                        Log.d(TAG, "WebViewClient: Attempting to start activity for general URL: " + url);
+                        Intent intent = new Intent(Intent.ACTION_VIEW, u);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        if (intent.resolveActivity(PythonActivity.mActivity.getPackageManager()) != null) {
+                            PythonActivity.mActivity.startActivity(intent);
+                            return true; 
+                        } else {
+                            Log.w(TAG, "WebViewClient: No app found to handle URL: " + url);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "WebViewClient: Error trying to handle URL with Intent: " + url, e);
+                    }
+
+                    Log.d(TAG, "WebViewClient: Fallback - Letting WebView attempt to handle URL: " + url);
+                    return false;
+                }
+
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    Log.d(TAG, "WebViewClient: onPageFinished: " + url);
+                    CookieManager.getInstance().flush();
+                }
+            });
+
+            mWebView.setDownloadListener(new DownloadListener() {
+                @Override
+                public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimetype, long contentLength) {
+                    Log.d(TAG, "DownloadListener: onDownloadStart. URL: " + url + " Mimetype: " + mimetype);
+                    try {
+                        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                        request.setMimeType(mimetype);
+                        String cookies = CookieManager.getInstance().getCookie(url);
+                        request.addRequestHeader("cookie", cookies);
+                        request.addRequestHeader("User-Agent", userAgent);
+                        request.setDescription("Downloading file...");
+                        
+                        String fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype);
+                        request.setTitle(fileName);
+                        
+                        request.allowScanningByMediaScanner();
+                        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                        
+                        DownloadManager dm = (DownloadManager) PythonActivity.mActivity.getSystemService(Context.DOWNLOAD_SERVICE);
+                        if (dm != null) {
+                            dm.enqueue(request);
+                            Toast.makeText(PythonActivity.mActivity.getApplicationContext(), "Downloading " + fileName, Toast.LENGTH_LONG).show();
+                        } else {
+                            Log.e(TAG, "DownloadListener: DownloadManager is null");
+                            Toast.makeText(PythonActivity.mActivity.getApplicationContext(), "Download failed: DM unavailable.", Toast.LENGTH_LONG).show();
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "DownloadListener: Error starting download: " + e.getMessage(), e);
+                        Toast.makeText(PythonActivity.mActivity.getApplicationContext(), "Download error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        try {
+                            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                            PythonActivity.mActivity.startActivity(i);
+                        } catch (Exception ex) {
+                            Log.e(TAG, "DownloadListener: Fallback download attempt failed: " + ex.getMessage(), ex);
+                        }
+                    }
+                }
+            });
+
+            mWebView.setWebChromeClient(new WebChromeClient() {
+                @Override
+                public void onPermissionRequest(final PermissionRequest request) {
+                    final String[] requestedResources = request.getResources();
+                    Log.d(TAG, "WebChromeClient: onPermissionRequest for origin: " + request.getOrigin().toString());
+                    Log.d(TAG, "WebChromeClient: Requesting WebView resources: " + Arrays.toString(requestedResources));
+
+                    PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ArrayList<String> permissionsToGrantInWebView = new ArrayList<>();
+                            boolean allAppPermissionsSufficient = true; // Assume true initially
+
+                            for (String resource : requestedResources) {
+                                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                                    if (PythonActivity.mActivity.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                        permissionsToGrantInWebView.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
+                                    } else {
+                                        Log.w(TAG, "WebChromeClient: App lacks CAMERA permission for WebView VIDEO_CAPTURE request.");
+                                        allAppPermissionsSufficient = false;
+                                    }
+                                } else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                                    if (PythonActivity.mActivity.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                        permissionsToGrantInWebView.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
+                                    } else {
+                                        Log.w(TAG, "WebChromeClient: App lacks RECORD_AUDIO permission for WebView AUDIO_CAPTURE request.");
+                                        allAppPermissionsSufficient = false;
+                                    }
+                                } else {
+                                    Log.d(TAG, "WebChromeClient: Unhandled WebView resource request: " + resource);
+                                    // For unhandled resources, we might deny them or require specific app permissions
+                                    allAppPermissionsSufficient = false; 
+                                }
+                            }
+
+                            if (!permissionsToGrantInWebView.isEmpty() && allAppPermissionsSufficient) {
+                                Log.i(TAG, "WebChromeClient: Granting WebView permissions for: " + permissionsToGrantInWebView.toString());
+                                request.grant(permissionsToGrantInWebView.toArray(new String[0]));
+                            } else {
+                                Log.w(TAG, "WebChromeClient: Denying WebView request. Requested: " + Arrays.toString(requestedResources) +
+                                           ", AppPermissionsSufficient: " + allAppPermissionsSufficient +
+                                           ", ToGrantList: " + permissionsToGrantInWebView.toString());
+                                request.deny();
                             }
                         }
-                        return false;
-                    }
+                    });
+                }
+                // You can override other WebChromeClient methods like onConsoleMessage for debugging JS
+                // @Override
+                // public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
+                //     Log.d("WebViewConsole", consoleMessage.message() + " -- From line "
+                //             + consoleMessage.lineNumber() + " of "
+                //             + consoleMessage.sourceId());
+                //     return super.onConsoleMessage(consoleMessage);
+                // }
+            });
 
-                    @Override
-                    public void onPageFinished(WebView view, String url) {
-                        CookieManager.getInstance().flush();
-                    }
-                });
             mLayout = new AbsoluteLayout(PythonActivity.mActivity);
             mLayout.addView(mWebView);
-
             setContentView(mLayout);
 
-            String mFilesDirectory = mActivity.getFilesDir().getAbsolutePath();
-            String entry_point = getEntryPoint(app_root_dir);
+            mWebView.loadUrl("file:///android_asset/_load.html"); // Initial P4A loading page
+
+            String mFilesDirectory = PythonActivity.mActivity.getFilesDir().getAbsolutePath();
+            String entry_point = PythonActivity.this.getEntryPoint(PythonActivity.this.getAppRoot()); // Use instance methods
 
             Log.v(TAG, "Setting env vars for start.c and Python to use");
             PythonActivity.nativeSetenv("ANDROID_ENTRYPOINT", entry_point);
-            PythonActivity.nativeSetenv("ANDROID_ARGUMENT", app_root_dir);
-            PythonActivity.nativeSetenv("ANDROID_APP_PATH", app_root_dir);
+            PythonActivity.nativeSetenv("ANDROID_ARGUMENT", PythonActivity.this.getAppRoot());
+            PythonActivity.nativeSetenv("ANDROID_APP_PATH", PythonActivity.this.getAppRoot());
             PythonActivity.nativeSetenv("ANDROID_PRIVATE", mFilesDirectory);
-            PythonActivity.nativeSetenv("ANDROID_UNPACK", app_root_dir);
-            PythonActivity.nativeSetenv("PYTHONHOME", app_root_dir);
-            PythonActivity.nativeSetenv("PYTHONPATH", app_root_dir + ":" + app_root_dir + "/lib");
+            PythonActivity.nativeSetenv("ANDROID_UNPACK", PythonActivity.this.getAppRoot());
+            PythonActivity.nativeSetenv("PYTHONHOME", PythonActivity.this.getAppRoot());
+            PythonActivity.nativeSetenv("PYTHONPATH", PythonActivity.this.getAppRoot() + ":" + PythonActivity.this.getAppRoot() + "/lib");
             PythonActivity.nativeSetenv("PYTHONOPTIMIZE", "2");
 
             try {
                 Log.v(TAG, "Access to our meta-data...");
-                mActivity.mMetaData = mActivity.getPackageManager().getApplicationInfo(
-                        mActivity.getPackageName(), PackageManager.GET_META_DATA).metaData;
+                // Use instance mActivity for getPackageManager()
+                mMetaData = PythonActivity.mActivity.getPackageManager().getApplicationInfo(
+                        PythonActivity.mActivity.getPackageName(), PackageManager.GET_META_DATA).metaData;
 
-                PowerManager pm = (PowerManager) mActivity.getSystemService(Context.POWER_SERVICE);
-                if ( mActivity.mMetaData.getInt("wakelock") == 1 ) {
-                    mActivity.mWakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "Screen On");
-                    mActivity.mWakeLock.acquire();
+                PowerManager pm = (PowerManager) PythonActivity.mActivity.getSystemService(Context.POWER_SERVICE);
+                if (mMetaData != null && mMetaData.containsKey("wakelock") && mMetaData.getInt("wakelock") == 1 ) {
+                    // Use instance mWakeLock
+                    PythonActivity.this.mWakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, TAG + ":ScreenOn"); // Use specific tag
+                    PythonActivity.this.mWakeLock.acquire();
+                    Log.d(TAG, "Wakelock acquired.");
                 }
             } catch (PackageManager.NameNotFoundException e) {
+                 Log.e(TAG, "PackageManager.NameNotFoundException for meta-data", e);
+            } catch (NullPointerException e) {
+                 Log.e(TAG, "NullPointerException for meta-data (mMetaData might be null)", e);
             }
 
+            Log.d(TAG, "Starting Python thread...");
             final Thread pythonThread = new Thread(new PythonMain(), "PythonThread");
             PythonActivity.mPythonThread = pythonThread;
             pythonThread.start();
 
+            Log.d(TAG, "Starting WebViewLoader thread...");
             final Thread wvThread = new Thread(new WebViewLoaderMain(), "WvThread");
             wvThread.start();
+            Log.d(TAG, "onPostExecute finished.");
         }
     }
 
     @Override
     public void onDestroy() {
-        Log.i("Destroy", "end of app");
+        Log.i(TAG, "onDestroy called");
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            mWakeLock.release();
+            mWakeLock = null; // Good practice to nullify
+            Log.d(TAG, "Wakelock released in onDestroy");
+        }
         super.onDestroy();
-
-        // make sure all child threads (python_thread) are stopped
-        android.os.Process.killProcess(android.os.Process.myPid());
+        // Commenting out killProcess as it's generally not recommended.
+        // Let Android manage process lifecycle if possible.
+        // android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     public void loadLibraries() {
-        String app_root = new String(getAppRoot());
+        // Use instance method getAppRoot()
+        String app_root = getAppRoot();
         File app_root_file = new File(app_root);
         PythonUtil.loadLibraries(app_root_file,
             new File(getApplicationInfo().nativeLibraryDir));
     }
 
     public static void loadUrl(String url) {
+        if (PythonActivity.mActivity == null || PythonActivity.mWebView == null) {
+            Log.e(TAG, "loadUrl called but mActivity or mWebView is null. URL: " + url);
+            return;
+        }
         class LoadUrl implements Runnable {
             private String mUrl;
-
-            public LoadUrl(String url) {
-                mUrl = url;
-            }
-
+            public LoadUrl(String url) { this.mUrl = url; }
             public void run() {
-                mWebView.loadUrl(mUrl);
+                if (PythonActivity.mWebView != null) {
+                    PythonActivity.mWebView.loadUrl(this.mUrl);
+                } else {
+                    Log.e(TAG, "mWebView became null inside LoadUrl Runnable. URL: " + this.mUrl);
+                }
             }
         }
-
-        Log.i(TAG, "Opening URL: " + url);
-        mActivity.runOnUiThread(new LoadUrl(url));
+        Log.i(TAG, "PythonActivity.loadUrl requesting to load: " + url);
+        PythonActivity.mActivity.runOnUiThread(new LoadUrl(url));
     }
 
     public static void enableZoom() {
-        mActivity.runOnUiThread(new Runnable() {
+        if (PythonActivity.mActivity == null || PythonActivity.mWebView == null) {
+            Log.e(TAG, "enableZoom called but mActivity or mWebView is null.");
+            return;
+        }
+        PythonActivity.mActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                mWebView.getSettings().setBuiltInZoomControls(true);
-                mWebView.getSettings().setDisplayZoomControls(false);
+                if (PythonActivity.mWebView != null) {
+                    PythonActivity.mWebView.getSettings().setBuiltInZoomControls(true);
+                    PythonActivity.mWebView.getSettings().setDisplayZoomControls(false);
+                }
             }
         });
     }
 
     public static ViewGroup getLayout() {
-        return   mLayout;
+        return PythonActivity.mLayout;
     }
 
     long lastBackClick = 0;
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        // Check if the key event was the Back button
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            // Go back if there is web page history behind,
-            // but not to the start preloader
-            WebBackForwardList webViewBackForwardList = mWebView.copyBackForwardList();
-            if (webViewBackForwardList.getCurrentIndex() > 1) {
-                mWebView.goBack();
-                return true;
+            if (PythonActivity.mWebView != null && PythonActivity.mWebView.canGoBack()) {
+                WebBackForwardList webViewBackForwardList = PythonActivity.mWebView.copyBackForwardList();
+                if (webViewBackForwardList.getCurrentIndex() > 0) { // Allow going back from first app page to _load.html for this test
+                                                                    // but ideally > 1 if _load.html is not user-visible
+                    Log.d(TAG, "WebView going back.");
+                    PythonActivity.mWebView.goBack();
+                    return true;
+                }
             }
-
-            // If there's no web page history, bubble up to the default
-            // system behavior (probably exit the activity)
             if (SystemClock.elapsedRealtime() - lastBackClick > 2000){
                 lastBackClick = SystemClock.elapsedRealtime();
                 Toast.makeText(this, "Tap again to close the app", Toast.LENGTH_LONG).show();
-                return true;
+                return true; 
             }
-
-            lastBackClick = SystemClock.elapsedRealtime();
         }
-
         return super.onKeyDown(keyCode, event);
     }
 
-    // loading screen implementation
     public static ImageView mImageView = null;
     public void removeLoadingScreen() {
-      runOnUiThread(new Runnable() {
+      if (PythonActivity.mActivity == null) return;
+      PythonActivity.mActivity.runOnUiThread(new Runnable() {
         public void run() {
           if (PythonActivity.mImageView != null &&
                   PythonActivity.mImageView.getParent() != null) {
@@ -312,13 +476,6 @@ public class PythonActivity extends Activity {
     }
 
     protected void showLoadingScreen() {
-      // load the bitmap
-      // 1. if the image is valid and we don't have layout yet, assign this bitmap
-      // as main view.
-      // 2. if we have a layout, just set it in the layout.
-      // 3. If we have an mImageView already, then do nothing because it will have
-      // already been made the content view or added to the layout.
-
       if (mImageView == null) {
         int presplashId = this.resourceManager.getIdentifier("presplash", "drawable");
         InputStream is = this.getResources().openRawResource(presplashId);
@@ -327,69 +484,56 @@ public class PythonActivity extends Activity {
           bitmap = BitmapFactory.decodeStream(is);
         } finally {
           try {
-            is.close();
-          } catch (IOException e) {};
+            if (is != null) is.close();
+          } catch (IOException e) {
+              Log.e(TAG, "IOException closing presplash InputStream", e);
+          };
+        }
+
+        if (bitmap == null) {
+            Log.e(TAG, "Failed to decode presplash bitmap.");
+            // Consider not setting content view if bitmap is null or using a fallback
+            return; 
         }
 
         mImageView = new ImageView(this);
         mImageView.setImageBitmap(bitmap);
 
-        /*
-         * Set the presplash loading screen background color
-         * https://developer.android.com/reference/android/graphics/Color.html
-         * Parse the color string, and return the corresponding color-int.
-         * If the string cannot be parsed, throws an IllegalArgumentException exception.
-         * Supported formats are: #RRGGBB #AARRGGBB or one of the following names:
-         * 'red', 'blue', 'green', 'black', 'white', 'gray', 'cyan', 'magenta', 'yellow',
-         * 'lightgray', 'darkgray', 'grey', 'lightgrey', 'darkgrey', 'aqua', 'fuchsia',
-         * 'lime', 'maroon', 'navy', 'olive', 'purple', 'silver', 'teal'.
-         */
         String backgroundColor = resourceManager.getString("presplash_color");
         if (backgroundColor != null) {
           try {
             mImageView.setBackgroundColor(Color.parseColor(backgroundColor));
-          } catch (IllegalArgumentException e) {}
+          } catch (IllegalArgumentException e) {
+              Log.w(TAG, "Invalid presplash_color: " + backgroundColor, e);
+          }
         }
         mImageView.setLayoutParams(new ViewGroup.LayoutParams(
         ViewGroup.LayoutParams.FILL_PARENT,
         ViewGroup.LayoutParams.FILL_PARENT));
         mImageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-
       }
 
       if (mLayout == null) {
         setContentView(mImageView);
-      } else if (PythonActivity.mImageView.getParent() == null){
+      } else if (PythonActivity.mImageView != null && PythonActivity.mImageView.getParent() == null){
         mLayout.addView(mImageView);
       }
     }
 
-    //----------------------------------------------------------------------------
-    // Listener interface for onNewIntent
-    //
-
-    public interface NewIntentListener {
-        void onNewIntent(Intent intent);
-    }
-
+    public interface NewIntentListener { void onNewIntent(Intent intent); }
     private List<NewIntentListener> newIntentListeners = null;
-
     public void registerNewIntentListener(NewIntentListener listener) {
         if ( this.newIntentListeners == null )
             this.newIntentListeners = Collections.synchronizedList(new ArrayList<NewIntentListener>());
         this.newIntentListeners.add(listener);
     }
-
     public void unregisterNewIntentListener(NewIntentListener listener) {
-        if ( this.newIntentListeners == null )
-            return;
+        if ( this.newIntentListeners == null ) return;
         this.newIntentListeners.remove(listener);
     }
-
     @Override
     protected void onNewIntent(Intent intent) {
-        if ( this.newIntentListeners == null )
-            return;
+        if ( this.newIntentListeners == null ) return;
         this.onResume();
         synchronized ( this.newIntentListeners ) {
             Iterator<NewIntentListener> iterator = this.newIntentListeners.iterator();
@@ -399,32 +543,20 @@ public class PythonActivity extends Activity {
         }
     }
 
-    //----------------------------------------------------------------------------
-    // Listener interface for onActivityResult
-    //
-
-    public interface ActivityResultListener {
-        void onActivityResult(int requestCode, int resultCode, Intent data);
-    }
-
+    public interface ActivityResultListener { void onActivityResult(int requestCode, int resultCode, Intent data); }
     private List<ActivityResultListener> activityResultListeners = null;
-
     public void registerActivityResultListener(ActivityResultListener listener) {
         if ( this.activityResultListeners == null )
             this.activityResultListeners = Collections.synchronizedList(new ArrayList<ActivityResultListener>());
         this.activityResultListeners.add(listener);
     }
-
     public void unregisterActivityResultListener(ActivityResultListener listener) {
-        if ( this.activityResultListeners == null )
-            return;
+        if ( this.activityResultListeners == null ) return;
         this.activityResultListeners.remove(listener);
     }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
-        if ( this.activityResultListeners == null )
-            return;
+        if ( this.activityResultListeners == null ) return;
         this.onResume();
         synchronized ( this.activityResultListeners ) {
             Iterator<ActivityResultListener> iterator = this.activityResultListeners.iterator();
@@ -433,45 +565,29 @@ public class PythonActivity extends Activity {
         }
     }
 
-    public static void start_service(
-            String serviceTitle,
-            String serviceDescription,
-            String pythonServiceArgument
-            ) {
-        _do_start_service(
-            serviceTitle, serviceDescription, pythonServiceArgument, true
-        );
+    public static void start_service(String serviceTitle, String serviceDescription, String pythonServiceArgument) {
+        _do_start_service(serviceTitle, serviceDescription, pythonServiceArgument, true);
     }
-
-    public static void start_service_not_as_foreground(
-            String serviceTitle,
-            String serviceDescription,
-            String pythonServiceArgument
-            ) {
-        _do_start_service(
-            serviceTitle, serviceDescription, pythonServiceArgument, false
-        );
+    public static void start_service_not_as_foreground(String serviceTitle, String serviceDescription, String pythonServiceArgument) {
+        _do_start_service(serviceTitle, serviceDescription, pythonServiceArgument, false);
     }
-
-    public static void _do_start_service(
-            String serviceTitle,
-            String serviceDescription,
-            String pythonServiceArgument,
-            boolean showForegroundNotification
-            ) {
+    public static void _do_start_service(String serviceTitle, String serviceDescription, String pythonServiceArgument, boolean showForegroundNotification) {
+        if (PythonActivity.mActivity == null) {
+            Log.e(TAG, "_do_start_service called but mActivity is null.");
+            return;
+        }
         Intent serviceIntent = new Intent(PythonActivity.mActivity, PythonService.class);
         String argument = PythonActivity.mActivity.getFilesDir().getAbsolutePath();
-        String app_root_dir = PythonActivity.mActivity.getAppRoot();
-        String entry_point = PythonActivity.mActivity.getEntryPoint(app_root_dir + "/service");
+        String app_root_dir = PythonActivity.mActivity.getAppRoot(); // Assuming getAppRoot can be called on static mActivity context if needed, or use instance this.getAppRoot()
+        String entry_point = PythonActivity.mActivity.getEntryPoint(app_root_dir + "/service"); // Same as above for getEntryPoint
+        
         serviceIntent.putExtra("androidPrivate", argument);
         serviceIntent.putExtra("androidArgument", app_root_dir);
         serviceIntent.putExtra("serviceEntrypoint", "service/" + entry_point);
         serviceIntent.putExtra("pythonName", "python");
         serviceIntent.putExtra("pythonHome", app_root_dir);
         serviceIntent.putExtra("pythonPath", app_root_dir + ":" + app_root_dir + "/lib");
-        serviceIntent.putExtra("serviceStartAsForeground",
-            (showForegroundNotification ? "true" : "false")
-        );
+        serviceIntent.putExtra("serviceStartAsForeground", (showForegroundNotification ? "true" : "false"));
         serviceIntent.putExtra("serviceTitle", serviceTitle);
         serviceIntent.putExtra("serviceDescription", serviceDescription);
         serviceIntent.putExtra("pythonServiceArgument", pythonServiceArgument);
@@ -479,32 +595,25 @@ public class PythonActivity extends Activity {
     }
 
     public static void stop_service() {
+        if (PythonActivity.mActivity == null) {
+            Log.e(TAG, "stop_service called but mActivity is null.");
+            return;
+        }
         Intent serviceIntent = new Intent(PythonActivity.mActivity, PythonService.class);
         PythonActivity.mActivity.stopService(serviceIntent);
     }
 
-
     public static native void nativeSetenv(String name, String value);
     public static native int nativeInit(Object arguments);
 
-
-    /**
-     * Used by android.permissions p4a module to register a call back after
-     * requesting runtime permissions
-     **/
-    public interface PermissionsCallback {
-        void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults);
-    }
-
+    public interface PermissionsCallback { void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults); }
     private PermissionsCallback permissionCallback;
     private boolean havePermissionsCallback = false;
-
     public void addPermissionsCallback(PermissionsCallback callback) {
         permissionCallback = callback;
         havePermissionsCallback = true;
         Log.v(TAG, "addPermissionsCallback(): Added callback for onRequestPermissionsResult");
     }
-
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         Log.v(TAG, "onRequestPermissionsResult()");
@@ -515,58 +624,57 @@ public class PythonActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
-    /**
-     * Used by android.permissions p4a module to check a permission
-     **/
+    // Using instance method checkSelfPermission since minApi >= 23
     public boolean checkCurrentPermission(String permission) {
-        if (android.os.Build.VERSION.SDK_INT < 23)
-            return true;
-
-        try {
-            java.lang.reflect.Method methodCheckPermission =
-                Activity.class.getMethod("checkSelfPermission", String.class);
-            Object resultObj = methodCheckPermission.invoke(this, permission);
-            int result = Integer.parseInt(resultObj.toString());
-            if (result == PackageManager.PERMISSION_GRANTED)
-                return true;
-        } catch (IllegalAccessException | NoSuchMethodException |
-                 InvocationTargetException e) {
-        }
-        return false;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true; // Should not hit if minApi = 26
+        // No reflection needed, direct call.
+        return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
     }
-
-    /**
-     * Used by android.permissions p4a module to request runtime permissions
-     **/
+    
+    // Using instance method requestPermissions since minApi >= 23
     public void requestPermissionsWithRequestCode(String[] permissions, int requestCode) {
-        if (android.os.Build.VERSION.SDK_INT < 23)
-            return;
-        try {
-            java.lang.reflect.Method methodRequestPermission =
-                Activity.class.getMethod("requestPermissions",
-                String[].class, int.class);
-            methodRequestPermission.invoke(this, permissions, requestCode);
-        } catch (IllegalAccessException | NoSuchMethodException |
-                 InvocationTargetException e) {
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return; // Should not hit
+        // No reflection needed, direct call.
+        requestPermissions(permissions, requestCode);
     }
 
+    // This is an instance method, matches the one used by android.permissions from P4A
     public void requestPermissions(String[] permissions) {
-        requestPermissionsWithRequestCode(permissions, 1);
+        requestPermissionsWithRequestCode(permissions, 1); // Default request code 1
     }
 }
 
+// These classes are typically in separate files in P4A's webview bootstrap
+// (e.g., PythonMain.java, WebViewLoader.java).
+// If you are modifying PythonActivity.java directly in your *fork* of P4A,
+// these would remain as they are if they are indeed separate files in the original P4A structure.
+// If they were helper classes *inside* the original PythonActivity.java you copied,
+// then keeping them here is fine.
+
+// Assuming they are separate for now, and you'd modify WebViewLoader.java separately if needed.
+// If they were defined at the bottom of P4A's PythonActivity.java, then you'd keep them here.
+// The original file you posted had them at the bottom, so I'll keep them here.
 
 class PythonMain implements Runnable {
     @Override
     public void run() {
-        PythonActivity.nativeInit(new String[0]);
+        if (PythonActivity.mActivity != null) {
+            PythonActivity.nativeInit(new String[0]);
+        } else {
+            Log.e("PythonMain", "mActivity is null, cannot call nativeInit!");
+        }
     }
 }
 
 class WebViewLoaderMain implements Runnable {
     @Override
     public void run() {
-        WebViewLoader.testConnection();
+        if (PythonActivity.mActivity != null) {
+            // If you modify WebViewLoader.java for query params,
+            // ensure that class is also part of your forked P4A source.
+            WebViewLoader.testConnection();
+        } else {
+            Log.e("WebViewLoaderMain", "mActivity is null, cannot call WebViewLoader.testConnection!");
+        }
     }
 }
