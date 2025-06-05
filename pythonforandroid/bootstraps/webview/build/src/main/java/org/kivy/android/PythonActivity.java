@@ -31,7 +31,7 @@ import android.widget.ImageView;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.webkit.WebSettings; // Added for more settings access
+import android.webkit.WebSettings;
 
 import android.widget.AbsoluteLayout;
 import android.view.ViewGroup.LayoutParams;
@@ -46,10 +46,14 @@ import android.net.Uri;
 import android.webkit.WebChromeClient;
 import android.webkit.PermissionRequest;
 import android.webkit.DownloadListener;
+import android.webkit.JavascriptInterface;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
 import android.os.Environment;
 import android.app.DownloadManager;
-import android.os.Build; // For version checks in onPermissionRequest
-import java.util.Arrays; // For logging arrays
+import android.os.Build;
+import java.util.Arrays;
 
 import org.renpy.android.ResourceManager;
 
@@ -97,6 +101,85 @@ public class PythonActivity extends Activity {
         mLayout = null;
         mBrokenLibraries = false;
     }
+    public class LedFxJavascriptInterface {
+        Context mContext;
+
+        LedFxJavascriptInterface(Context c) {
+            mContext = c;
+        }
+
+        @JavascriptInterface // This annotation is crucial
+        public void exportConfigFile(String fileName, String fileContentJson) {
+            Log.d(TAG, "JavascriptInterface: exportConfigFile called. Filename: " + fileName);
+            if (fileName == null || fileName.isEmpty() || fileContentJson == null) {
+                Log.e(TAG, "JavascriptInterface: Invalid filename or content for export.");
+                mActivity.runOnUiThread(() -> 
+                    Toast.makeText(mContext, "Export failed: Invalid data", Toast.LENGTH_SHORT).show()
+                );
+                return;
+            }
+
+            // Check for WRITE_EXTERNAL_STORAGE permission (primarily for older Android)
+            // For saving to public Downloads, this is often needed, or handled by SAF on newer Android.
+            // Your app already requests WRITE_EXTERNAL_STORAGE.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { // Scoped storage is enforced on Q+
+                 if (mContext.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "JavascriptInterface: WRITE_EXTERNAL_STORAGE permission not granted.");
+                    mActivity.runOnUiThread(() ->
+                        Toast.makeText(mContext, "Export failed: Storage permission denied.", Toast.LENGTH_LONG).show()
+                    );
+                    // Optionally, trigger a permission request here if you want to be more proactive,
+                    // but usually permissions are requested upfront.
+                    return;
+                }
+            }
+
+
+            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!downloadsDir.exists()) {
+                if (!downloadsDir.mkdirs()) {
+                    Log.e(TAG, "JavascriptInterface: Failed to create Downloads directory.");
+                     mActivity.runOnUiThread(() ->
+                        Toast.makeText(mContext, "Export failed: Cannot access Downloads folder.", Toast.LENGTH_LONG).show()
+                    );
+                    return;
+                }
+            }
+
+            File file = new File(downloadsDir, fileName);
+            Log.d(TAG, "JavascriptInterface: Saving to file: " + file.getAbsolutePath());
+
+            try (FileOutputStream fos = new FileOutputStream(file);
+                 OutputStreamWriter writer = new OutputStreamWriter(fos)) {
+                writer.write(fileContentJson);
+                writer.flush();
+                Log.i(TAG, "JavascriptInterface: File exported successfully to " + file.getAbsolutePath());
+                
+                // Notify user
+                mActivity.runOnUiThread(() ->
+                    Toast.makeText(mContext, fileName + " saved to Downloads", Toast.LENGTH_LONG).show()
+                );
+
+                // Optional: Trigger media scanner to make the file visible immediately in file explorers
+                Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+                Uri contentUri = Uri.fromFile(file); // Or FileProvider for stricter access on newer Android
+                mediaScanIntent.setData(contentUri);
+                mContext.sendBroadcast(mediaScanIntent);
+
+            } catch (IOException e) {
+                Log.e(TAG, "JavascriptInterface: Error writing file for export", e);
+                mActivity.runOnUiThread(() ->
+                    Toast.makeText(mContext, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show()
+                );
+            } catch (Exception e) {
+                Log.e(TAG, "JavascriptInterface: Unexpected error during export", e);
+                 mActivity.runOnUiThread(() ->
+                    Toast.makeText(mContext, "Export failed: Unexpected error.", Toast.LENGTH_LONG).show()
+                );
+            }
+        }
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -174,7 +257,8 @@ public class PythonActivity extends Activity {
 
 
             mWebView.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
-            
+            mWebView.addJavascriptInterface(new LedFxJavascriptInterface(PythonActivity.mActivity), "LedFxAndroidBridge");
+            Log.i(TAG, "LedFxAndroidBridge JavascriptInterface added to WebView.");
             mWebView.setWebViewClient(new WebViewClient() {
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, String url) {
