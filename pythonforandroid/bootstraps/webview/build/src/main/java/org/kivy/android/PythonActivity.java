@@ -54,7 +54,8 @@ import android.os.Environment;
 import android.app.DownloadManager;
 import android.os.Build;
 import java.util.Arrays;
-
+import android.webkit.ValueCallback;
+import android.content.ClipData;
 import org.renpy.android.ResourceManager;
 
 public class PythonActivity extends Activity {
@@ -400,6 +401,36 @@ public class PythonActivity extends Activity {
                         }
                     });
                 }
+                // *** ADD onShowFileChooser for <input type="file"> ***
+                private ValueCallback<Uri[]> mUploadMessageArray;
+                private static final int FILECHOOSER_RESULTCODE = 1;
+
+                 @Override
+                public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                    Log.d(TAG, "WebChromeClient: onShowFileChooser called");
+                    if (PythonActivity.this.mFileUploadCallback != null) {
+                        PythonActivity.this.mFileUploadCallback.onReceiveValue(null);
+                    }
+                    PythonActivity.this.mFileUploadCallback = filePathCallback; // Store callback in Activity field
+
+                    Intent intent;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        intent = fileChooserParams.createIntent();
+                    } else {
+                        intent = new Intent(Intent.ACTION_GET_CONTENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("*/*"); // Or "application/json"
+                    }
+                    try {
+                        PythonActivity.this.startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE);
+                    } catch (android.content.ActivityNotFoundException e) {
+                        Log.e(TAG, "Cannot open file chooser", e);
+                        Toast.makeText(getApplicationContext(), "Cannot open file chooser", Toast.LENGTH_LONG).show();
+                        PythonActivity.this.mFileUploadCallback = null;
+                        return false;
+                    }
+                    return true;
+                }
                 // You can override other WebChromeClient methods like onConsoleMessage for debugging JS
                 // @Override
                 // public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
@@ -409,6 +440,7 @@ public class PythonActivity extends Activity {
                 //     return super.onConsoleMessage(consoleMessage);
                 // }
             });
+
 
             mLayout = new AbsoluteLayout(PythonActivity.mActivity);
             mLayout.addView(mWebView);
@@ -640,14 +672,43 @@ public class PythonActivity extends Activity {
     }
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
-        if ( this.activityResultListeners == null ) return;
-        this.onResume();
-        synchronized ( this.activityResultListeners ) {
-            Iterator<ActivityResultListener> iterator = this.activityResultListeners.iterator();
-            while ( iterator.hasNext() )
-                (iterator.next()).onActivityResult(requestCode, resultCode, intent);
+         Log.d(TAG, "onActivityResult requestCode: " + requestCode + ", resultCode: " + resultCode);
+    if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+        if (mFileUploadCallback == null) {
+            Log.w(TAG, "mFileUploadCallback is null in onActivityResult");
+            super.onActivityResult(requestCode, resultCode, intent);
+            return;
         }
+        Uri[] results = null;
+        if (resultCode == Activity.RESULT_OK) {
+            if (intent != null) {
+                String dataString = intent.getDataString();
+                if (dataString != null) {
+                    results = new Uri[]{ Uri.parse(dataString) };
+                } else { // For multiple files (though your input is not 'multiple')
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                        ClipData clipData = intent.getClipData();
+                        if (clipData != null) {
+                            results = new Uri[clipData.getItemCount()];
+                            for (int i = 0; i < clipData.getItemCount(); i++) {
+                                results[i] = clipData.getItemAt(i).getUri();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Log.d(TAG, "Received file chooser result: " + (results != null ? Arrays.toString(results) : "null results"));
+        mFileUploadCallback.onReceiveValue(results);
+        mFileUploadCallback = null;
+    } else {
+        // If not our file chooser result, pass it to P4A's original handling (if any) or super
+        Log.d(TAG, "Passing onActivityResult to super for requestCode: " + requestCode);
+        super.onActivityResult(requestCode, resultCode, intent);
+        // P4A's PythonActivity already has a system for ActivityResultListeners,
+        // so calling super.onActivityResult should invoke that if needed.
     }
+}
 
     public static void start_service(String serviceTitle, String serviceDescription, String pythonServiceArgument) {
         _do_start_service(serviceTitle, serviceDescription, pythonServiceArgument, true);
