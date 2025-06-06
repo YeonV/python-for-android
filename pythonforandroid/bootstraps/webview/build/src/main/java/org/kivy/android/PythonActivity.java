@@ -57,6 +57,8 @@ import java.util.Arrays;
 import android.webkit.ValueCallback;
 import android.content.ClipData;
 import org.renpy.android.ResourceManager;
+import android.provider.MediaStore;
+import android.content.ContentValues;
 import java.io.OutputStream;
 
 public class PythonActivity extends Activity {
