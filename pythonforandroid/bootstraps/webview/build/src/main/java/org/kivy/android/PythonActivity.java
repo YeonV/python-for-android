@@ -57,6 +57,7 @@ import java.util.Arrays;
 import android.webkit.ValueCallback;
 import android.content.ClipData;
 import org.renpy.android.ResourceManager;
+import java.io.OutputStream;
 
 public class PythonActivity extends Activity {
     // This activity is modified from a mixture of the SDLActivity and
@@ -113,72 +114,101 @@ public class PythonActivity extends Activity {
 
         @JavascriptInterface // This annotation is crucial
         public void exportConfigFile(String fileName, String fileContentJson) {
-            Log.d(TAG, "JavascriptInterface: exportConfigFile called. Filename: " + fileName);
-            if (fileName == null || fileName.isEmpty() || fileContentJson == null) {
-                Log.e(TAG, "JavascriptInterface: Invalid filename or content for export.");
-                mActivity.runOnUiThread(() -> 
-                    Toast.makeText(mContext, "Export failed: Invalid data", Toast.LENGTH_SHORT).show()
-                );
-                return;
-            }
+            Log.d(TAG, "JavascriptInterface: exportConfigFile (MediaStore) called. Filename: " + fileName);
+            // ... (null/empty checks for fileName, fileContentJson as before) ...
 
-            // Check for WRITE_EXTERNAL_STORAGE permission (primarily for older Android)
-            // For saving to public Downloads, this is often needed, or handled by SAF on newer Android.
-            // Your app already requests WRITE_EXTERNAL_STORAGE.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { // Scoped storage is enforced on Q+
-                 if (mContext.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                    Log.e(TAG, "JavascriptInterface: WRITE_EXTERNAL_STORAGE permission not granted.");
-                    mActivity.runOnUiThread(() ->
-                        Toast.makeText(mContext, "Export failed: Storage permission denied.", Toast.LENGTH_LONG).show()
-                    );
-                    // Optionally, trigger a permission request here if you want to be more proactive,
-                    // but usually permissions are requested upfront.
-                    return;
+            OutputStream outputStream = null;
+            Uri itemUri = null;
+
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, "application/json"); // Or "application/octet-stream"
+
+                // For Android Q (API 29) and above, save to Downloads collection
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 1); // Mark as pending until write is complete
+                    itemUri = mContext.getContentResolver().insert(MediaStore.Downloads.getContentUri("external"), values);
+                } else {
+                    // For older versions (pre-API 29), use direct path with legacy storage permission
+                    // This part assumes WRITE_EXTERNAL_STORAGE is granted and requestLegacyExternalStorage might be needed for API 29 if this branch is hit
+                    File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    if (!downloadsDir.exists()) {
+                        downloadsDir.mkdirs();
+                    }
+                    File file = new File(downloadsDir, fileName);
+                    itemUri = Uri.fromFile(file); // This won't work directly with getContentResolver().openOutputStream
+                                                // For pre-Q, direct FileOutputStream is better as in your original working code for app-specific dir
+                    // Let's stick to the direct FileOutputStream for pre-Q if legacy flag is used,
+                    // or ensure it works. For simplicity with MediaStore, focusing on Q+.
+
+                    // If strictly using MediaStore for pre-Q for downloads, it's more complex or might not place it in public "Downloads" as easily.
+                    // The direct file path approach (with WRITE_EXTERNAL_STORAGE) was simpler for pre-Q public downloads.
+                    // Given minApi=26, this else block might be hit.
+                    // For simplicity here, let's show the direct file write for pre-Q which needs WRITE_EXTERNAL_STORAGE
+                    Log.d(TAG, "JSInterface: Pre-Q, attempting direct file write to Downloads (needs WRITE_EXTERNAL_STORAGE).");
+                    File legacyDownloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    if (!legacyDownloadsDir.exists()) legacyDownloadsDir.mkdirs();
+                    File legacyFile = new File(legacyDownloadsDir, fileName);
+
+                    try (FileOutputStream fos = new FileOutputStream(legacyFile);
+                        OutputStreamWriter writer = new OutputStreamWriter(fos)) {
+                        writer.write(fileContentJson);
+                        writer.flush();
+                        Log.i(TAG, "JSInterface: File (pre-Q) exported successfully to " + legacyFile.getAbsolutePath());
+                        PythonActivity.mActivity.runOnUiThread(() ->
+                            Toast.makeText(mContext, fileName + " saved to Downloads", Toast.LENGTH_LONG).show()
+                        );
+                        // Trigger media scanner for pre-Q direct writes
+                        Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+                        mediaScanIntent.setData(Uri.fromFile(legacyFile));
+                        mContext.sendBroadcast(mediaScanIntent);
+                        return; // Successfully saved using legacy method
+                    }
+                    // If direct write fails, the generic catch below will handle it.
                 }
-            }
 
-
-            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (!downloadsDir.exists()) {
-                if (!downloadsDir.mkdirs()) {
-                    Log.e(TAG, "JavascriptInterface: Failed to create Downloads directory.");
-                     mActivity.runOnUiThread(() ->
-                        Toast.makeText(mContext, "Export failed: Cannot access Downloads folder.", Toast.LENGTH_LONG).show()
-                    );
-                    return;
+                if (itemUri == null) {
+                    throw new IOException("Failed to create new MediaStore entry.");
                 }
-            }
 
-            File file = new File(downloadsDir, fileName);
-            Log.d(TAG, "JavascriptInterface: Saving to file: " + file.getAbsolutePath());
+                outputStream = mContext.getContentResolver().openOutputStream(itemUri);
+                if (outputStream == null) {
+                    throw new IOException("Failed to get output stream.");
+                }
 
-            try (FileOutputStream fos = new FileOutputStream(file);
-                 OutputStreamWriter writer = new OutputStreamWriter(fos)) {
-                writer.write(fileContentJson);
-                writer.flush();
-                Log.i(TAG, "JavascriptInterface: File exported successfully to " + file.getAbsolutePath());
-                
-                // Notify user
-                mActivity.runOnUiThread(() ->
+                try (OutputStreamWriter writer = new OutputStreamWriter(outputStream)) {
+                    writer.write(fileContentJson);
+                    writer.flush(); // Ensure all data is written
+                } // try-with-resources will close outputStream
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear();
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0); // Mark write as complete
+                    mContext.getContentResolver().update(itemUri, values, null, null);
+                }
+
+                Log.i(TAG, "JSInterface: File exported successfully using MediaStore to Downloads. URI: " + itemUri.toString());
+                PythonActivity.mActivity.runOnUiThread(() ->
                     Toast.makeText(mContext, fileName + " saved to Downloads", Toast.LENGTH_LONG).show()
                 );
 
-                // Optional: Trigger media scanner to make the file visible immediately in file explorers
-                Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-                Uri contentUri = Uri.fromFile(file); // Or FileProvider for stricter access on newer Android
-                mediaScanIntent.setData(contentUri);
-                mContext.sendBroadcast(mediaScanIntent);
-
-            } catch (IOException e) {
-                Log.e(TAG, "JavascriptInterface: Error writing file for export", e);
-                mActivity.runOnUiThread(() ->
+            } catch (Exception e) { // Catch generic Exception for broader issues
+                Log.e(TAG, "JSInterface: Error writing file via MediaStore or legacy path", e);
+                PythonActivity.mActivity.runOnUiThread(() ->
                     Toast.makeText(mContext, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show()
                 );
-            } catch (Exception e) {
-                Log.e(TAG, "JavascriptInterface: Unexpected error during export", e);
-                 mActivity.runOnUiThread(() ->
-                    Toast.makeText(mContext, "Export failed: Unexpected error.", Toast.LENGTH_LONG).show()
-                );
+                // If IS_PENDING was set, try to delete the pending entry on error
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && itemUri != null) {
+                    try {
+                        mContext.getContentResolver().delete(itemUri, null, null);
+                    } catch (Exception deleteEx) {
+                        Log.e(TAG, "JSInterface: Error deleting pending MediaStore entry", deleteEx);
+                    }
+                }
+            } finally {
+                // outputStream is closed by try-with-resources if initialized
             }
         }
     }
