@@ -310,8 +310,7 @@ public class PythonActivity extends Activity {
                  // Allow mixed content (HTTP in HTTPS) - use with caution if loading external sites
                  // For localhost, this is usually fine.
                 webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-            }
-
+            }            
 
             mWebView.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
             mWebView.addJavascriptInterface(new LedFxJavascriptInterface(PythonActivity.mActivity), "LedFxAndroidBridge");
@@ -506,6 +505,7 @@ public class PythonActivity extends Activity {
 
 
             mLayout = new AbsoluteLayout(PythonActivity.mActivity);
+            mLayout.setBackgroundColor(mPresplashColor);
             mLayout.addView(mWebView);
             setContentView(mLayout);
 
@@ -686,6 +686,7 @@ public class PythonActivity extends Activity {
               Log.w(TAG, "Invalid presplash_color: " + backgroundColor, e);
           }
         }
+        mImageView.setBackgroundColor(mPresplashColor);
         mImageView.setLayoutParams(new ViewGroup.LayoutParams(
         ViewGroup.LayoutParams.FILL_PARENT,
         ViewGroup.LayoutParams.FILL_PARENT));
