@@ -82,6 +82,7 @@ public class PythonActivity extends Activity {
     private ResourceManager resourceManager = null;
     private Bundle mMetaData = null;
     private PowerManager.WakeLock mWakeLock = null;
+    private int mPresplashColor = Color.BLACK;
     private ValueCallback<Uri[]> mFileUploadCallbackInstance; // Renamed to avoid conflict with method param
     private static final int FILE_CHOOSER_RESULT_CODE_INSTANCE = 101; // Renamed for clarity
 
@@ -222,6 +223,26 @@ public class PythonActivity extends Activity {
         resourceManager = new ResourceManager(this);
         super.onCreate(savedInstanceState);
 
+        /*
+         * Try to parse background color for use in layout, webview, and presplash image
+         * https://developer.android.com/reference/android/graphics/Color.html
+         * Parse the color string, and return the corresponding color-int.
+         * If the string cannot be parsed, throws an IllegalArgumentException exception.
+         * Supported formats are: #RRGGBB #AARRGGBB or one of the following names:
+         * 'red', 'blue', 'green', 'black', 'white', 'gray', 'cyan', 'magenta', 'yellow',
+         * 'lightgray', 'darkgray', 'grey', 'lightgrey', 'darkgrey', 'aqua', 'fuchsia',
+         * 'lime', 'maroon', 'navy', 'olive', 'purple', 'silver', 'teal'.
+         */
+        String backgroundColor = resourceManager.getString("presplash_color");
+        if (backgroundColor != null) {
+          try {
+            this.mPresplashColor = Color.parseColor(backgroundColor);
+          } catch (IllegalArgumentException e) {
+            Log.e(TAG, "Invalid color string for presplash_color: " + backgroundColor);
+          }
+        }
+
+        this.mActivity = this;
         PythonActivity.mActivity = this; // Set static mActivity to this instance
         this.showLoadingScreen();
         new UnpackFilesTask().execute(getAppRoot());
@@ -277,6 +298,7 @@ public class PythonActivity extends Activity {
 
             Log.d(TAG, "Setting up WebView...");
             mWebView = new WebView(PythonActivity.mActivity);
+            mWebView.setBackgroundColor(mPresplashColor);
             WebSettings webSettings = mWebView.getSettings();
             webSettings.setJavaScriptEnabled(true);
             webSettings.setDomStorageEnabled(true);
