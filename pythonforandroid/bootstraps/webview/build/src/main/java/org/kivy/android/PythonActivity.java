@@ -699,6 +699,22 @@ public class PythonActivity extends Activity {
         
         return super.onKeyDown(keyCode, event);
     }
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (isDpadOrRemoteKey(keyCode) && PythonActivity.mWebView != null) {
+            String eventData = String.format(
+                "window.dispatchEvent(new CustomEvent('androidremoteup', {" +
+                "detail: {key: '%s', code: '%s', keyCode: %d}" +
+                "}));",
+                getKeyName(keyCode),
+                android.view.KeyEvent.keyCodeToString(keyCode),
+                keyCode
+            );
+            PythonActivity.mWebView.evaluateJavascript(eventData, null);
+            return customRemoteNavigation;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
 
     private boolean isDpadOrRemoteKey(int keyCode) {
         return keyCode == KeyEvent.KEYCODE_DPAD_UP ||
