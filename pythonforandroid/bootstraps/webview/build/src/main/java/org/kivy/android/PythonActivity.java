@@ -223,6 +223,36 @@ public class PythonActivity extends Activity {
             Log.d(TAG, "Remote navigation mode set to: " + (enabled ? "CUSTOM" : "NATIVE"));
             customRemoteNavigation = enabled;
         }
+
+        @JavascriptInterface
+        public void exitApp() {
+            Log.i(TAG, "exitApp called from JavaScript - terminating app");
+            PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    // Stop any running service
+                    try {
+                        PythonActivity.stop_service();
+                        Log.d(TAG, "Service stopped");
+                    } catch (Exception e) {
+                        Log.w(TAG, "Error stopping service (may not be running): " + e.getMessage());
+                    }
+                    
+                    // Finish the activity
+                    PythonActivity.mActivity.finish();
+                    
+                    // Optional: Force process termination after a short delay
+                    // to ensure everything is cleaned up
+                    new android.os.Handler().postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            android.os.Process.killProcess(android.os.Process.myPid());
+                            System.exit(0);
+                        }
+                    }, 500);
+                }
+            });
+        }
     }
 
 
