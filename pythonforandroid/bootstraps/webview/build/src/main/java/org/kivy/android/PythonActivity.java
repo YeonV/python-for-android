@@ -85,6 +85,7 @@ public class PythonActivity extends Activity {
     private int mPresplashColor = Color.BLACK;
     private ValueCallback<Uri[]> mFileUploadCallbackInstance; // Renamed to avoid conflict with method param
     private static final int FILE_CHOOSER_RESULT_CODE_INSTANCE = 101; // Renamed for clarity
+    private boolean customRemoteNavigation = false; // Default: use native navigation
 
     public String getAppRoot() {
         String app_root =  getFilesDir().getAbsolutePath() + "/app";
@@ -216,6 +217,14 @@ public class PythonActivity extends Activity {
         }
     }
 
+    public class RemoteControlInterface {
+        @JavascriptInterface
+        public void setCustomNavigation(boolean enabled) {
+            Log.d(TAG, "Remote navigation mode set to: " + (enabled ? "CUSTOM" : "NATIVE"));
+            customRemoteNavigation = enabled;
+        }
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -315,6 +324,8 @@ public class PythonActivity extends Activity {
             mWebView.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
             mWebView.addJavascriptInterface(new LedFxJavascriptInterface(PythonActivity.mActivity), "LedFxAndroidBridge");
             Log.i(TAG, "LedFxAndroidBridge JavascriptInterface added to WebView.");
+            mWebView.addJavascriptInterface(new RemoteControlInterface(), "AndroidRemoteControl");
+            Log.i(TAG, "AndroidRemoteControl JavascriptInterface added to WebView.");
             mWebView.setWebViewClient(new WebViewClient() {
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, String url) {
@@ -620,6 +631,7 @@ public class PythonActivity extends Activity {
     long lastBackClick = 0;
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // Handle BACK button with existing logic
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (PythonActivity.mWebView != null && PythonActivity.mWebView.canGoBack()) {
                 WebBackForwardList webViewBackForwardList = PythonActivity.mWebView.copyBackForwardList();
@@ -636,7 +648,53 @@ public class PythonActivity extends Activity {
                 return true; 
             }
         }
+        
+        // Handle D-pad and remote control buttons
+        if (isDpadOrRemoteKey(keyCode) && PythonActivity.mWebView != null) {
+            // Always inject the event so React can see it
+            String eventData = String.format(
+                "window.dispatchEvent(new CustomEvent('androidremote', {" +
+                "detail: {key: '%s', code: '%s', keyCode: %d}" +
+                "}));",
+                getKeyName(keyCode),
+                android.view.KeyEvent.keyCodeToString(keyCode),
+                keyCode
+            );
+            PythonActivity.mWebView.evaluateJavascript(eventData, null);
+            Log.d(TAG, "Injected remote event: " + getKeyName(keyCode) + " (custom=" + customRemoteNavigation + ")");
+            
+            // Only consume if React app wants custom navigation
+            return customRemoteNavigation;
+        }
+        
         return super.onKeyDown(keyCode, event);
+    }
+
+    private boolean isDpadOrRemoteKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+               keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+               keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+               keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+               keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+               keyCode == KeyEvent.KEYCODE_MENU ||
+               keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+               keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+               keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE;
+    }
+
+    private String getKeyName(int keyCode) {
+        switch(keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP: return "ArrowUp";
+            case KeyEvent.KEYCODE_DPAD_DOWN: return "ArrowDown";
+            case KeyEvent.KEYCODE_DPAD_LEFT: return "ArrowLeft";
+            case KeyEvent.KEYCODE_DPAD_RIGHT: return "ArrowRight";
+            case KeyEvent.KEYCODE_DPAD_CENTER: return "Enter";
+            case KeyEvent.KEYCODE_MENU: return "Menu";
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE: return "MediaPlayPause";
+            case KeyEvent.KEYCODE_MEDIA_PLAY: return "MediaPlay";
+            case KeyEvent.KEYCODE_MEDIA_PAUSE: return "MediaPause";
+            default: return android.view.KeyEvent.keyCodeToString(keyCode);
+        }
     }
 
     public static ImageView mImageView = null;
