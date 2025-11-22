@@ -225,6 +225,110 @@ public class PythonActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getCpuAbi() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                return Build.SUPPORTED_ABIS[0]; // Returns "arm64-v8a" or "armeabi-v7a"
+            } else {
+                return Build.CPU_ABI; // Fallback for older Android versions
+            }
+        }
+
+        @JavascriptInterface
+        public String getAllSupportedAbis() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                return android.text.TextUtils.join(",", Build.SUPPORTED_ABIS);
+            } else {
+                return Build.CPU_ABI + "," + Build.CPU_ABI2;
+            }
+        }
+
+        @JavascriptInterface
+        public void downloadAndInstallApk(String apkUrl) {
+            Log.i(TAG, "downloadAndInstallApk called with URL: " + apkUrl);
+            PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
+                        request.setTitle("App Update");
+                        request.setDescription("Downloading new version...");
+                        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "app-update.apk");
+                        
+                        final DownloadManager downloadManager = (DownloadManager) PythonActivity.mActivity.getSystemService(Context.DOWNLOAD_SERVICE);
+                        final long downloadId = downloadManager.enqueue(request);
+                        
+                        // Monitor download completion
+                        android.content.BroadcastReceiver onComplete = new android.content.BroadcastReceiver() {
+                            @Override
+                            public void onReceive(Context context, Intent intent) {
+                                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                                if (id == downloadId) {
+                                    Log.i(TAG, "APK download completed, initiating installation");
+                                    installApk(downloadManager, downloadId);
+                                    context.unregisterReceiver(this);
+                                }
+                            }
+                        };
+                        
+                        PythonActivity.mActivity.registerReceiver(onComplete, 
+                            new android.content.IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                        
+                        Toast.makeText(PythonActivity.mActivity, "Downloading update...", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error downloading APK: " + e.getMessage(), e);
+                        Toast.makeText(PythonActivity.mActivity, "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+        }
+
+        private void installApk(DownloadManager downloadManager, long downloadId) {
+            Uri apkUri = downloadManager.getUriForDownloadedFile(downloadId);
+            if (apkUri == null) {
+                Log.e(TAG, "Downloaded APK URI is null");
+                Toast.makeText(PythonActivity.mActivity, "Installation failed: file not found", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                // Android 7.0+ requires FileProvider
+                // Note: You'll need to add a FileProvider to your AndroidManifest.xml
+                installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            }
+            
+            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            
+            try {
+                PythonActivity.mActivity.startActivity(installIntent);
+            } catch (Exception e) {
+                Log.e(TAG, "Error installing APK: " + e.getMessage(), e);
+                Toast.makeText(PythonActivity.mActivity, "Installation failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                PackageManager pm = PythonActivity.mActivity.getPackageManager();
+                String packageName = PythonActivity.mActivity.getPackageName();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    return pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName;
+                } else {
+                    return pm.getPackageInfo(packageName, 0).versionName;
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.e(TAG, "Error getting app version: " + e.getMessage());
+                return "unknown";
+            }
+        }
+
+        @JavascriptInterface
         public void exitApp() {
             Log.i(TAG, "exitApp called from JavaScript - terminating app");
             PythonActivity.mActivity.runOnUiThread(new Runnable() {
