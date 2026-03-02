@@ -1016,8 +1016,17 @@ public class PythonActivity extends Activity {
             Log.e(TAG, "stop_service called but mActivity is null.");
             return;
         }
-        Intent serviceIntent = new Intent(PythonActivity.mActivity, PythonService.class);
-        PythonActivity.mActivity.stopService(serviceIntent);
+        // p4a generates service classes as <app_package>.Service<Name> (e.g. ServiceLedfx).
+        // These extend PythonService, but Android's stopService() matches by EXACT component
+        // class name. Using PythonService.class here targets org.kivy.android.PythonService
+        // which does NOT match the running service → the call silently does nothing.
+        // We must build the Intent with the correct generated class name.
+        String packageName = PythonActivity.mActivity.getPackageName();
+        String serviceClassName = packageName + ".ServiceLedfx";
+        Intent serviceIntent = new Intent();
+        serviceIntent.setClassName(packageName, serviceClassName);
+        boolean result = PythonActivity.mActivity.stopService(serviceIntent);
+        Log.d(TAG, "stop_service: stopService returned " + result + " for " + serviceClassName);
     }
 
     public static native void nativeSetenv(String name, String value);
