@@ -1588,13 +1588,20 @@ class MesonRecipe(PyProjectRecipe):
             file.close()
         # set cross file
         self.ensure_args('-Csetup-args=--cross-file', '-Csetup-args={}'.format(cross_file))
-        # ensure ninja and meson
-        for dep in [
-            "ninja",
-            "meson=={}".format(self.meson_version),
-        ]:
-            if dep not in self.hostpython_prerequisites:
-                self.hostpython_prerequisites.append(dep)
+        # Ensure ninja and meson.
+        #
+        # Rebind rather than append: hostpython_prerequisites is a mutable class
+        # attribute on PythonRecipe, shared by every recipe that does not define
+        # its own. Appending leaks one recipe's pin into the next recipe's
+        # install list, so a recipe overriding meson_version ends up asking pip
+        # for two meson versions at once and hits ResolutionImpossible. Dropping
+        # any inherited pin first also keeps this idempotent across archs.
+        pins = ["ninja", "meson=={}".format(self.meson_version)]
+        self.hostpython_prerequisites = [
+            dep
+            for dep in self.hostpython_prerequisites
+            if dep != "ninja" and not dep.startswith("meson==")
+        ] + pins
 
         if not self.skip_python:
             super().build_arch(arch)
