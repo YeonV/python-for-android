@@ -27,6 +27,7 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.widget.ImageView;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -1067,6 +1068,28 @@ public class PythonActivity extends Activity {
     // This is an instance method, matches the one used by android.permissions from P4A
     public void requestPermissions(String[] permissions) {
         requestPermissionsWithRequestCode(permissions, 1); // Default request code 1
+    }
+
+    public interface DarkModeListener {
+        void onDarkModeChanged(boolean isDarkMode);
+    }
+
+    private DarkModeListener darkModeListener = null;
+
+    public void setDarkModeListener(DarkModeListener listener) {
+        darkModeListener = listener;
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        int currentNightMode = newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        boolean isDarkMode = currentNightMode == Configuration.UI_MODE_NIGHT_YES;
+
+        if (darkModeListener != null) {
+            darkModeListener.onDarkModeChanged(isDarkMode);
+        }
+
+        super.onConfigurationChanged(newConfig);
     }
 }
 

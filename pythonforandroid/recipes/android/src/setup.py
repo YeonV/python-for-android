@@ -7,7 +7,10 @@ lib_dict = {
     'sdl2': ['SDL2', 'SDL2_image', 'SDL2_mixer', 'SDL2_ttf'],
     'sdl3': ['SDL3', 'SDL3_image', 'SDL3_mixer', 'SDL3_ttf'],
 }
-sdl_libs = lib_dict.get(os.environ['BOOTSTRAP'], ['main'])
+sdl_libs = lib_dict.get(
+    os.environ['BOOTSTRAP'],
+    [os.environ.get('ANDROID_MAIN_LIB', 'main')]
+)
 
 modules = [
     Extension('android._android',
@@ -31,5 +34,8 @@ setup(name='android',
       version='1.0',
       packages=['android'],
       package_dir={'android': 'android'},
+      # Top-level, not under `android`: the name is Kivy's, and Kivy imports it
+      # without knowing which bootstrap built the app.
+      py_modules=['_kivy_bootstrap'],
       ext_modules=cythonized_modules
       )
