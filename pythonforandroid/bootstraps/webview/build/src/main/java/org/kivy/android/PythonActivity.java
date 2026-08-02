@@ -59,6 +59,7 @@ import android.webkit.ValueCallback;
 import android.content.ClipData;
 import org.renpy.android.ResourceManager;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.content.ContentValues;
 import java.io.OutputStream;
 
@@ -87,6 +88,61 @@ public class PythonActivity extends Activity {
     private ValueCallback<Uri[]> mFileUploadCallbackInstance; // Renamed to avoid conflict with method param
     private static final int FILE_CHOOSER_RESULT_CODE_INSTANCE = 101; // Renamed for clarity
     private boolean customRemoteNavigation = false; // Default: use native navigation
+
+    // Self-update needs "Install unknown apps" granted per-app from Android 8
+    // onwards. Declaring REQUEST_INSTALL_PACKAGES in the manifest is not enough,
+    // so we send the user to the settings screen and resume once they return.
+    private static final int INSTALL_PERMISSION_RESULT_CODE = 102;
+    private String pendingApkUrl = null;
+    // downloadAndInstallApk lives on RemoteControlInterface; keep the instance
+    // we hand to the WebView so the update can be resumed from onActivityResult.
+    private RemoteControlInterface mRemoteBridge = null;
+
+    /**
+     * Whether this app may install APKs. Below Android 8 the manifest
+     * permission is sufficient; from Android 8 the user must also allow it
+     * per-app under Settings -> "Install unknown apps".
+     */
+    public static boolean canInstallPackages() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return true;
+        }
+        if (PythonActivity.mActivity == null) {
+            return false;
+        }
+        return PythonActivity.mActivity.getPackageManager().canRequestPackageInstalls();
+    }
+
+    /**
+     * Open the per-app "Install unknown apps" screen. Uses
+     * startActivityForResult so onActivityResult can resume a pending update
+     * as soon as the user comes back, rather than leaving them to retrigger it.
+     */
+    public void openInstallPermissionSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        try {
+            Intent intent = new Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + getPackageName()));
+            startActivityForResult(intent, INSTALL_PERMISSION_RESULT_CODE);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not open install-permission settings: " + e.getMessage(), e);
+            try {
+                // Some OEM builds do not honour the per-app screen
+                startActivityForResult(
+                    new Intent(Settings.ACTION_SECURITY_SETTINGS),
+                    INSTALL_PERMISSION_RESULT_CODE);
+            } catch (Exception inner) {
+                Log.e(TAG, "Could not open security settings either: " + inner.getMessage(), inner);
+                Toast.makeText(
+                    PythonActivity.mActivity,
+                    "Please allow installing unknown apps for LedFx in Android settings",
+                    Toast.LENGTH_LONG).show();
+            }
+        }
+    }
 
     public String getAppRoot() {
         String app_root =  getFilesDir().getAbsolutePath() + "/app";
@@ -249,6 +305,18 @@ public class PythonActivity extends Activity {
             PythonActivity.mActivity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    // Check before downloading, not after: without this grant the
+                    // install intent is refused and the download is wasted.
+                    if (!PythonActivity.canInstallPackages()) {
+                        Log.i(TAG, "Install permission missing, sending user to settings");
+                        PythonActivity.mActivity.pendingApkUrl = apkUrl;
+                        Toast.makeText(
+                            PythonActivity.mActivity,
+                            "Allow installing unknown apps, then return to LedFx",
+                            Toast.LENGTH_LONG).show();
+                        PythonActivity.mActivity.openInstallPermissionSettings();
+                        return;
+                    }
                     try {
                         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
                         request.setTitle("App Update");
@@ -280,6 +348,23 @@ public class PythonActivity extends Activity {
                         Log.e(TAG, "Error downloading APK: " + e.getMessage(), e);
                         Toast.makeText(PythonActivity.mActivity, "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     }
+                }
+            });
+        }
+
+        /** Lets the UI show the right prompt instead of guessing. */
+        @JavascriptInterface
+        public boolean canInstallPackages() {
+            return PythonActivity.canInstallPackages();
+        }
+
+        /** Opens the per-app "Install unknown apps" screen. */
+        @JavascriptInterface
+        public void requestInstallPermission() {
+            PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    PythonActivity.mActivity.openInstallPermissionSettings();
                 }
             });
         }
@@ -459,7 +544,8 @@ public class PythonActivity extends Activity {
             mWebView.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
             mWebView.addJavascriptInterface(new LedFxJavascriptInterface(PythonActivity.mActivity), "LedFxAndroidBridge");
             Log.i(TAG, "LedFxAndroidBridge JavascriptInterface added to WebView.");
-            mWebView.addJavascriptInterface(new RemoteControlInterface(), "AndroidRemoteControl");
+            mRemoteBridge = new RemoteControlInterface();
+            mWebView.addJavascriptInterface(mRemoteBridge, "AndroidRemoteControl");
             Log.i(TAG, "AndroidRemoteControl JavascriptInterface added to WebView.");
             mWebView.setWebViewClient(new WebViewClient() {
                 @Override
@@ -946,6 +1032,29 @@ public class PythonActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
         Log.d(TAG, "onActivityResult requestCode: " + requestCode + ", resultCode: " + resultCode);
+
+        // Returning from the "Install unknown apps" screen. The settings screen
+        // always reports RESULT_CANCELED, so re-check the permission itself
+        // rather than trusting resultCode.
+        if (requestCode == INSTALL_PERMISSION_RESULT_CODE) {
+            String apkUrl = pendingApkUrl;
+            pendingApkUrl = null;
+            if (canInstallPackages()) {
+                if (apkUrl != null && mRemoteBridge != null) {
+                    Log.i(TAG, "Install permission granted, resuming update");
+                    Toast.makeText(this, "Permission granted - resuming update", Toast.LENGTH_SHORT).show();
+                    mRemoteBridge.downloadAndInstallApk(apkUrl);
+                }
+            } else {
+                Log.w(TAG, "Install permission still not granted, update cancelled");
+                Toast.makeText(
+                    this,
+                    "Update cancelled - installing unknown apps is not allowed",
+                    Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
         // Use the class member variable here:
         if (requestCode == FILE_CHOOSER_RESULT_CODE_INSTANCE) {
             // Use the class member variable here:
