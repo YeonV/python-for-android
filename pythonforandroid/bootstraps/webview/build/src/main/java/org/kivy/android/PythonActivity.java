@@ -26,6 +26,8 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.widget.ImageView;
@@ -111,6 +113,36 @@ public class PythonActivity extends Activity {
             return false;
         }
         return PythonActivity.mActivity.getPackageManager().canRequestPackageInstalls();
+    }
+
+    /**
+     * Drop the WebView's HTTP cache after the app has been upgraded.
+     *
+     * The frontend ships inside the APK and is served from localhost, but
+     * index.html carries no cache headers, so the WebView caches it together
+     * with the hashed bundle it points at. That cache lives in the app's
+     * webview data and survives an APK update - so after updating, the old
+     * frontend keeps being served from disk across restarts. It reports the
+     * previous version number and, with the in-app updater, keeps offering an
+     * update that is already installed.
+     *
+     * Keyed on versionCode so this costs nothing on an ordinary launch and
+     * only runs the first time a new build starts.
+     */
+    private void clearWebViewCacheOnUpgrade() {
+        try {
+            SharedPreferences prefs = getSharedPreferences("ledfx_webview", Context.MODE_PRIVATE);
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            int installed = info.versionCode;
+            if (prefs.getInt("cachedForVersion", -1) != installed) {
+                mWebView.clearCache(true);
+                prefs.edit().putInt("cachedForVersion", installed).apply();
+                Log.i(TAG, "App version changed to " + installed + " - cleared WebView cache");
+            }
+        } catch (Exception e) {
+            // Never block startup over a cache clear.
+            Log.w(TAG, "Could not clear WebView cache on upgrade", e);
+        }
     }
 
     /**
@@ -528,6 +560,7 @@ public class PythonActivity extends Activity {
             Log.d(TAG, "Setting up WebView...");
             mWebView = new WebView(PythonActivity.mActivity);
             mWebView.setBackgroundColor(mPresplashColor);
+            clearWebViewCacheOnUpgrade();
             WebSettings webSettings = mWebView.getSettings();
             webSettings.setJavaScriptEnabled(true);
             webSettings.setDomStorageEnabled(true);
