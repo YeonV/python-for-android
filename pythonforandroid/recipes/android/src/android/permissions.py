@@ -544,9 +544,18 @@ class _RequestPermissionsManager:
                 mActivity.requestPermissions(permissions)
             else:
                 cls._callback_id += 1
+                # Register before requesting, not after. When every permission
+                # is already granted Android has nothing to ask and delivers
+                # onRequestPermissionsResult immediately, on the UI thread,
+                # while this thread is still inside requestPermissionsWithRequestCode.
+                # python_callback would then look up a requestCode that has not
+                # been stored yet, find nothing, and return silently - so the
+                # caller's callback never fires and any Event it waits on
+                # blocks forever. python_callback does not take _lock, so the
+                # lock above does not prevent this.
+                cls._callbacks[cls._callback_id] = callback
                 mActivity.requestPermissionsWithRequestCode(
                     permissions, cls._callback_id)
-                cls._callbacks[cls._callback_id] = callback
 
     @classmethod
     def python_callback(cls, requestCode, permissions, grantResults):
