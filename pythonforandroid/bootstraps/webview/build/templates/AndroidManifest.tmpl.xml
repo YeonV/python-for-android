@@ -89,6 +89,19 @@
                  android:process=":service_{{ name }}" />
         {% endfor %}
 
+        <!-- Lets the app appear under Settings > Notification access. Granting
+             it is what permits MediaSessionManager.getActiveSessions(), so
+             Python can read the active media session through pyjnius. The
+             service reads nothing itself and is never bound until granted. -->
+        <service android:name="org.kivy.android.PythonNotificationListenerService"
+                 android:label="@string/app_name"
+                 android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+                 android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         {% if args.billing_pubkey %}
         <service android:name="org.kivy.android.billing.BillingReceiver"
                  android:process=":pythonbilling" />

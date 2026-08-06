@@ -18,6 +18,7 @@ import android.view.ViewGroup;
 import android.view.KeyEvent;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.util.Log;
@@ -113,6 +114,69 @@ public class PythonActivity extends Activity {
             return false;
         }
         return PythonActivity.mActivity.getPackageManager().canRequestPackageInstalls();
+    }
+
+    // The listener declared in the manifest. Android permits
+    // MediaSessionManager.getActiveSessions() only for a component the user has
+    // granted notification access to, which is how the core reads the currently
+    // playing track.
+    private static final String NOTIFICATION_LISTENER_CLASS =
+        "org.kivy.android.PythonNotificationListenerService";
+
+    /**
+     * Whether the user has granted notification access to this app.
+     *
+     * Readable without any permission of its own, so the UI can ask before
+     * offering the feature instead of letting the core fail silently.
+     */
+    public static boolean hasNotificationAccess() {
+        if (PythonActivity.mActivity == null) {
+            return false;
+        }
+        String enabled = Settings.Secure.getString(
+            PythonActivity.mActivity.getContentResolver(),
+            "enabled_notification_listeners");
+        if (enabled == null) {
+            return false;
+        }
+        return enabled.contains(
+            PythonActivity.mActivity.getPackageName() + "/" + NOTIFICATION_LISTENER_CLASS);
+    }
+
+    /**
+     * Send the user to the notification-access screen.
+     *
+     * This is a special access, not a runtime permission - there is no dialog
+     * to request it, only a settings screen. From Android 11 the system can
+     * open this app's own entry; before that only the full list exists, where
+     * the user has to find LedFx themselves.
+     *
+     * The API 30 action and extra are written as literals so this compiles
+     * against any SDK buildozer happens to pick.
+     */
+    public void openNotificationAccessSettings() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Intent detail = new Intent(
+                    "android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS");
+                detail.putExtra(
+                    "android.provider.extra.NOTIFICATION_LISTENER_COMPONENT_NAME",
+                    new ComponentName(this, NOTIFICATION_LISTENER_CLASS).flattenToString());
+                startActivity(detail);
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "Per-app notification access screen unavailable: " + e.getMessage());
+            }
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        } catch (Exception e) {
+            Log.e(TAG, "Could not open notification access settings: " + e.getMessage(), e);
+            Toast.makeText(
+                this,
+                "Could not open notification access settings",
+                Toast.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -397,6 +461,23 @@ public class PythonActivity extends Activity {
                 @Override
                 public void run() {
                     PythonActivity.mActivity.openInstallPermissionSettings();
+                }
+            });
+        }
+
+        /** False until the user allows LedFx to read the media session. */
+        @JavascriptInterface
+        public boolean hasNotificationAccess() {
+            return PythonActivity.hasNotificationAccess();
+        }
+
+        /** Opens the notification-access screen, where that grant is given. */
+        @JavascriptInterface
+        public void requestNotificationAccess() {
+            PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    PythonActivity.mActivity.openNotificationAccessSettings();
                 }
             });
         }
