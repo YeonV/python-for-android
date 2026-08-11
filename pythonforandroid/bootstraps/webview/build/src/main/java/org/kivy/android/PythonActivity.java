@@ -96,6 +96,12 @@ public class PythonActivity extends Activity {
     // onwards. Declaring REQUEST_INSTALL_PACKAGES in the manifest is not enough,
     // so we send the user to the settings screen and resume once they return.
     private static final int INSTALL_PERMISSION_RESULT_CODE = 102;
+
+    // AudioPlaybackCapture needs a MediaProjection, and only an Activity can
+    // ask for one. The capture itself runs in the service process, so the
+    // approved result is broadcast across to PythonService rather than used
+    // here. See PythonService.ACTION_SET_MEDIA_PROJECTION.
+    private static final int MEDIA_PROJECTION_RESULT_CODE = 103;
     private String pendingApkUrl = null;
     // downloadAndInstallApk lives on RemoteControlInterface; keep the instance
     // we hand to the WebView so the update can be resumed from onActivityResult.
@@ -154,6 +160,52 @@ public class PythonActivity extends Activity {
      * The API 30 action and extra are written as literals so this compiles
      * against any SDK buildozer happens to pick.
      */
+    /**
+     * Ask the user to approve a MediaProjection, so audio played by other apps
+     * can be captured.
+     *
+     * This is the only Android route to the output mix as a real, contiguous
+     * stream - the Visualizer API refreshes about twenty times a second and
+     * gives 8-bit samples, and AudioRecord only hears the microphone. The
+     * consent dialog is mandatory and cannot be suppressed.
+     */
+    public void requestMediaProjection() {
+        if (Build.VERSION.SDK_INT < 29) {
+            Log.w(TAG, "AudioPlaybackCapture needs API 29+, have "
+                  + Build.VERSION.SDK_INT);
+            return;
+        }
+        try {
+            android.media.projection.MediaProjectionManager manager =
+                (android.media.projection.MediaProjectionManager)
+                    getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            startActivityForResult(manager.createScreenCaptureIntent(),
+                                   MEDIA_PROJECTION_RESULT_CODE);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not start media projection request: "
+                  + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Hand the approved projection to the service process.
+     *
+     * The result Intent carries a token that only becomes a MediaProjection
+     * when paired with its result code, so both cross together.
+     */
+    private void deliverMediaProjection(int resultCode, Intent data) {
+        try {
+            Intent handoff = new Intent(PythonService.ACTION_SET_MEDIA_PROJECTION);
+            handoff.setPackage(getPackageName());
+            handoff.putExtra("resultCode", resultCode);
+            handoff.putExtra("resultData", data);
+            sendBroadcast(handoff);
+            Log.i(TAG, "Media projection delivered to service, code=" + resultCode);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not deliver media projection: " + e.getMessage(), e);
+        }
+    }
+
     public void openNotificationAccessSettings() {
         if (Build.VERSION.SDK_INT >= 30) {
             try {
@@ -478,6 +530,67 @@ public class PythonActivity extends Activity {
                 @Override
                 public void run() {
                     PythonActivity.mActivity.openNotificationAccessSettings();
+                }
+            });
+        }
+
+        /** True when this device can capture other apps' audio output at all. */
+        @JavascriptInterface
+        public boolean supportsPlaybackCapture() {
+            return Build.VERSION.SDK_INT >= 29;
+        }
+
+        /**
+         * The audio HAL's buffer quantum in frames, or 0 if unknown.
+         *
+         * Reads that are a whole multiple of this can take the fast capture
+         * path; a size straddling it spans two HAL buffers and carries the
+         * extra latency for nothing. LedFx derives its block size from
+         * sample_rate, so this is what that setting has to divide into.
+         */
+        @JavascriptInterface
+        public int getAudioFramesPerBuffer() {
+            return audioProperty(android.media.AudioManager
+                                 .PROPERTY_OUTPUT_FRAMES_PER_BUFFER);
+        }
+
+        /** The audio HAL's native output sample rate in Hz, or 0 if unknown. */
+        @JavascriptInterface
+        public int getAudioSampleRate() {
+            return audioProperty(android.media.AudioManager
+                                 .PROPERTY_OUTPUT_SAMPLE_RATE);
+        }
+
+        private int audioProperty(String key) {
+            try {
+                android.media.AudioManager am = (android.media.AudioManager)
+                    getSystemService(Context.AUDIO_SERVICE);
+                String value = am.getProperty(key);
+                return value == null ? 0 : Integer.parseInt(value);
+            } catch (Exception e) {
+                Log.w(TAG, "Could not read audio property " + key + ": "
+                      + e.getMessage());
+                return 0;
+            }
+        }
+
+        /** True once a projection has been approved and not yet revoked. */
+        @JavascriptInterface
+        public boolean hasPlaybackCapture() {
+            return PythonService.hasMediaProjection();
+        }
+
+        /**
+         * Shows the system capture-consent dialog. Returns immediately - the
+         * result arrives asynchronously and lands in PythonService, so poll
+         * hasPlaybackCapture() afterwards.
+         */
+        @JavascriptInterface
+        public void requestPlaybackCapture() {
+            PythonActivity.mActivity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    PythonActivity.mActivity.requestMediaProjection();
                 }
             });
         }
@@ -1146,6 +1259,18 @@ public class PythonActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
         Log.d(TAG, "onActivityResult requestCode: " + requestCode + ", resultCode: " + resultCode);
+
+        // Media projection consent. RESULT_OK plus a non-null Intent is the
+        // only combination that yields a usable projection; anything else is a
+        // decline and is left for the UI to re-offer.
+        if (requestCode == MEDIA_PROJECTION_RESULT_CODE) {
+            if (resultCode == RESULT_OK && intent != null) {
+                deliverMediaProjection(resultCode, intent);
+            } else {
+                Log.i(TAG, "Media projection declined by user");
+            }
+            return;
+        }
 
         // Returning from the "Install unknown apps" screen. The settings screen
         // always reports RESULT_CANCELED, so re-check the permission itself

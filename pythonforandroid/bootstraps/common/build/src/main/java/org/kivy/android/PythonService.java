@@ -5,8 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -35,6 +37,48 @@ public class PythonService extends Service implements Runnable {
     public static PythonService mService = null;
     private Intent startIntent = null;
 
+    /**
+     * MediaProjection hand-off, activity process -> service process.
+     *
+     * A MediaProjection can only be consented to by an Activity, but anything
+     * that wants to use it here (AudioPlaybackCapture, screen capture) runs in
+     * the service process, where there is no Activity at all. The activity
+     * broadcasts the approved result and this receiver parks it in a static,
+     * so Python can pick it up through pyjnius on the service side.
+     *
+     * A broadcast rather than startService extras on purpose: onStartCommand
+     * returns early once the Python thread exists, so extras delivered that way
+     * would be dropped, and a broadcast needs no knowledge of the generated
+     * Service<Name> class.
+     */
+    public static final String ACTION_SET_MEDIA_PROJECTION =
+        "org.kivy.android.action.SET_MEDIA_PROJECTION";
+
+    private static int sProjectionResultCode = 0;
+    private static Intent sProjectionResultData = null;
+    private BroadcastReceiver projectionReceiver = null;
+
+    /** Activity.RESULT_OK when consent was granted, 0 when never asked. */
+    public static int getMediaProjectionResultCode() {
+        return sProjectionResultCode;
+    }
+
+    /** The approved Intent, or null. Feed straight to getMediaProjection(). */
+    public static Intent getMediaProjectionResultData() {
+        return sProjectionResultData;
+    }
+
+    /** True once the user has approved a capture that is still usable. */
+    public static boolean hasMediaProjection() {
+        return sProjectionResultData != null && sProjectionResultCode != 0;
+    }
+
+    /** Dropped when the projection stops, so the UI can re-prompt. */
+    public static void clearMediaProjection() {
+        sProjectionResultCode = 0;
+        sProjectionResultData = null;
+    }
+
     private boolean autoRestartService = false;
 
     public void setAutoRestartService(boolean restart) {
@@ -53,6 +97,24 @@ public class PythonService extends Service implements Runnable {
     @Override
     public void onCreate() {
         super.onCreate();
+        projectionReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                sProjectionResultCode = intent.getIntExtra("resultCode", 0);
+                sProjectionResultData = intent.getParcelableExtra("resultData");
+                Log.i("python service", "media projection received, code="
+                      + sProjectionResultCode);
+            }
+        };
+        IntentFilter filter = new IntentFilter(ACTION_SET_MEDIA_PROJECTION);
+        // API 34 makes the exported flag mandatory. The literal is
+        // Context.RECEIVER_NOT_EXPORTED, written out so this still compiles
+        // against older SDKs.
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(projectionReceiver, filter, 4);
+        } else {
+            registerReceiver(projectionReceiver, filter);
+        }
     }
 
     @Override
@@ -178,6 +240,14 @@ public class PythonService extends Service implements Runnable {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (projectionReceiver != null) {
+            try {
+                unregisterReceiver(projectionReceiver);
+            } catch (Exception e) {
+                Log.w("python service", "projection receiver already gone");
+            }
+            projectionReceiver = null;
+        }
         pythonThread = null;
         if (autoRestartService && startIntent != null) {
             Log.v("python service", "service restart requested");
