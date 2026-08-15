@@ -161,8 +161,12 @@ public class PythonService extends Service implements Runnable {
      * service AND startForeground() is called with it explicitly; declaring
      * it in the manifest alone is not enough on API 34+. See build.py's
      * `foregroundServiceType=` service option and Service.tmpl.java.
+     *
+     * Named getP4AForegroundServiceType(), not getForegroundServiceType():
+     * android.app.Service already declares the latter as final - a real
+     * build failure caught this the hard way ("overridden method is final").
      */
-    protected int getForegroundServiceType() {
+    protected int getP4AForegroundServiceType() {
         return 0;
     }
 
@@ -246,7 +250,7 @@ public class PythonService extends Service implements Runnable {
             builder.setSmallIcon(smallIconId);
             notification = builder.build();
         }
-        int foregroundServiceType = getForegroundServiceType();
+        int foregroundServiceType = getP4AForegroundServiceType();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && foregroundServiceType != 0) {
             startForeground(getServiceId(), notification, foregroundServiceType);
         } else {

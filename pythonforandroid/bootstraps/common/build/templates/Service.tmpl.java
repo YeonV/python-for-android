@@ -21,7 +21,7 @@ public class Service{{ name|capitalize }} extends {{ base_service_class }} {
     {% if foreground_service_type_expr %}
 
     @Override
-    protected int getForegroundServiceType() {
+    protected int getP4AForegroundServiceType() {
         return {{ foreground_service_type_expr }};
     }
     {% endif %}
