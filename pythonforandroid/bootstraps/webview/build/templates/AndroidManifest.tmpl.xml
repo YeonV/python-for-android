@@ -100,6 +100,17 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+            <!-- All 4 sub-category checkboxes on the notification-access grant
+                 screen default to checked otherwise. Now Playing only ever
+                 reads the active media session (a MediaSessionManager call,
+                 not the listener stream itself) - "ongoing" is what Android
+                 categorizes an active-app/media/navigation notification as,
+                 the only one this actually needs. Unverified against a single
+                 canonical source (Android's own docs page for this didn't
+                 have it); cross-corroborated across two independent searches
+                 instead - confirm on-device once a build carries this. -->
+            <meta-data android:name="android.service.notification.default_filter_types"
+                       android:value="ongoing" />
         </service>
 
         {% if args.billing_pubkey %}
