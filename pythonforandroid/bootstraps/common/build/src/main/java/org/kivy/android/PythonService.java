@@ -154,6 +154,18 @@ public class PythonService extends Service implements Runnable {
         return 1;
     }
 
+    /**
+     * Foreground service type bitmask (ServiceInfo.FOREGROUND_SERVICE_TYPE_*),
+     * or 0 for none. Restricted types - mediaProjection is one - are rejected
+     * at the OS level unless this matches what the manifest declares for this
+     * service AND startForeground() is called with it explicitly; declaring
+     * it in the manifest alone is not enough on API 34+. See build.py's
+     * `foregroundServiceType=` service option and Service.tmpl.java.
+     */
+    protected int getForegroundServiceType() {
+        return 0;
+    }
+
     protected Intent getThisDefaultIntent(Context ctx, String pythonServiceArgument) {
         return null;
     }
@@ -234,7 +246,12 @@ public class PythonService extends Service implements Runnable {
             builder.setSmallIcon(smallIconId);
             notification = builder.build();
         }
-        startForeground(getServiceId(), notification);
+        int foregroundServiceType = getForegroundServiceType();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && foregroundServiceType != 0) {
+            startForeground(getServiceId(), notification, foregroundServiceType);
+        } else {
+            startForeground(getServiceId(), notification);
+        }
     }
 
     @Override

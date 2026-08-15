@@ -531,6 +531,30 @@ main.py that loads it.''')
         if exists(service_main) or exists(service_main + 'o'):
             service = True
 
+    def _foreground_service_type_expr(foreground_type):
+        """Manifest-style tokens (e.g. "mediaProjection", pipe-separated for
+        multiple) to a Java ServiceInfo.FOREGROUND_SERVICE_TYPE_* bitwise-OR
+        expression. Android's own naming is symmetric between the two forms
+        (mediaProjection -> MEDIA_PROJECTION, dataSync -> DATA_SYNC, etc.), so
+        this is a generic camelCase -> UPPER_SNAKE_CASE conversion, not a
+        lookup table tied to one type.
+        """
+        if not foreground_type:
+            return None
+        constants = []
+        for token in foreground_type.split('|'):
+            token = token.strip()
+            if not token:
+                continue
+            snake = ''.join(
+                '_' + ch if ch.isupper() and i > 0 else ch
+                for i, ch in enumerate(token)
+            ).upper()
+            constants.append(
+                'android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_' + snake
+            )
+        return ' | '.join(constants) if constants else None
+
     service_data = []
     base_service_class = args.service_class_name.split('.')[-1]
     for sid, spec in enumerate(args.services):
@@ -568,6 +592,7 @@ main.py that loads it.''')
             sticky=sticky,
             service_id=sid + 1,
             base_service_class=base_service_class,
+            foreground_service_type_expr=_foreground_service_type_expr(foreground_type),
         )
 
     # Find the SDK directory and target API

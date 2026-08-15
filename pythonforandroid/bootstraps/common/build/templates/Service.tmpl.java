@@ -18,6 +18,13 @@ public class Service{{ name|capitalize }} extends {{ base_service_class }} {
     protected int getServiceId() {
         return {{ service_id }};
     }
+    {% if foreground_service_type_expr %}
+
+    @Override
+    protected int getForegroundServiceType() {
+        return {{ foreground_service_type_expr }};
+    }
+    {% endif %}
 
     static private void _start(Context ctx, String smallIconName,
                                String contentTitle, String contentText,
