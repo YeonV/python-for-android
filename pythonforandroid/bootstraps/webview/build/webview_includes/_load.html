@@ -10,12 +10,17 @@
         <div id="container">
             <div id="load">
                 <div class="loader">Loading...</div>
-                <div id="status">Waking up...</div>
             </div>
         </div>
         <div id="content">
             <img src="banner.png" id="banner" >
         </div>
+        <!-- Sibling of #footer, not nested in #load: #load has its own
+             position:relative, so an absolutely-positioned child anchors to
+             THAT small box near the top instead of the full screen - the
+             bug behind an earlier version of this landing at the very top
+             instead of down by the footer where it belongs. -->
+        <div id="status"><span>Waking up...</span></div>
         <div id="footer">
             <p>
                 Android | by Blade
@@ -33,6 +38,7 @@
                 starting_server: "Almost there..."
             };
             var lastStatus = null;
+            var statusSpan = document.querySelector("#status span");
 
             function pollBootStatus() {
                 if (typeof LedFxAndroidBridge === "undefined"
@@ -47,8 +53,14 @@
                 }
                 if (status && status !== lastStatus && STATUS_MESSAGES[status]) {
                     lastStatus = status;
-                    document.getElementById("status").textContent =
-                        STATUS_MESSAGES[status];
+                    // Crossfade instead of an instant swap: fade out, change
+                    // text once invisible, fade back in. The box is a fixed
+                    // size (see CSS), so only opacity ever moves - no jump.
+                    statusSpan.style.opacity = "0";
+                    setTimeout(function () {
+                        statusSpan.textContent = STATUS_MESSAGES[status];
+                        statusSpan.style.opacity = "1";
+                    }, 350);
                 }
             }
 

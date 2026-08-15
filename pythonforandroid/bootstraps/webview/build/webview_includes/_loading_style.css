@@ -26,12 +26,31 @@ body {
     top: 4rem;
 }
 #status {
-    position: relative;
-    top: 6rem;
+    /* Anchored from the bottom, next to #footer: both position the same
+       way, so the gap between them is a deliberate margin rather than two
+       unrelated offsets that happen to land near each other. A fixed
+       min-height (not the earlier `position: relative; top:`) means text
+       re-wrapping between 1 and 2 lines across the four stage messages
+       never shifts the box itself - only what's inside it changes. */
+    position: absolute;
+    bottom: 4.5rem;
+    left: 0;
+    right: 0;
+    min-height: 2.6em;
+    padding: 0 2.5rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
     font-family: sans-serif;
-    font-size: 14px;
-    color: #999999;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+    color: rgba(153, 153, 153, 0.8);
     text-align: center;
+}
+#status span {
+    transition: opacity 0.35s ease;
 }
 
 #banner {
