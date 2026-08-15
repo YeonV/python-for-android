@@ -10,6 +10,7 @@
         <div id="container">
             <div id="load">
                 <div class="loader">Loading...</div>
+                <div id="status">Waking up...</div>
             </div>
         </div>
         <div id="content">
@@ -18,8 +19,41 @@
         <div id="footer">
             <p>
                 Android | by Blade
-            </p>  
+            </p>
         </div>
+        <script>
+            // Polls the one-word stage marker core.py writes at real startup
+            // checkpoints (see boot_status.patch / getBootStatus()) instead of
+            // guessing off a timer - measured startup time ranges from ~9s to
+            // ~53s depending on the device, so no fixed schedule fits both.
+            var STATUS_MESSAGES = {
+                starting: "Waking up...",
+                loading_modules: "Loading the toolbox...",
+                connecting_audio: "Tuning into the sound...",
+                starting_server: "Almost there..."
+            };
+            var lastStatus = null;
+
+            function pollBootStatus() {
+                if (typeof LedFxAndroidBridge === "undefined"
+                        || !LedFxAndroidBridge.getBootStatus) {
+                    return;
+                }
+                var status;
+                try {
+                    status = LedFxAndroidBridge.getBootStatus();
+                } catch (e) {
+                    return;
+                }
+                if (status && status !== lastStatus && STATUS_MESSAGES[status]) {
+                    lastStatus = status;
+                    document.getElementById("status").textContent =
+                        STATUS_MESSAGES[status];
+                }
+            }
+
+            setInterval(pollBootStatus, 500);
+        </script>
     </body>
   </html>
 </html>

@@ -25,6 +25,14 @@ body {
     position: relative;
     top: 4rem;
 }
+#status {
+    position: relative;
+    top: 6rem;
+    font-family: sans-serif;
+    font-size: 14px;
+    color: #999999;
+    text-align: center;
+}
 
 #banner {
     max-width: 100%;

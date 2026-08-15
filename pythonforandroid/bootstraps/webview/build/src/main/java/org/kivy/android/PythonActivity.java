@@ -420,6 +420,28 @@ public class PythonActivity extends Activity {
                 // outputStream is closed by try-with-resources if initialized
             }
         }
+
+        /**
+         * Reads the one-word stage marker core.py's _write_boot_stage()
+         * writes at real startup checkpoints (starting, loading_modules,
+         * connecting_audio, starting_server) - see boot_status.patch.
+         * Measured startup time ranges from ~9s to ~53s depending on the
+         * device, so the splash screen polls this instead of guessing off
+         * a timer. Empty string if LedFx hasn't reached a checkpoint yet,
+         * or on any read failure - callers should treat that as "no status
+         * yet" and keep whatever they were already showing.
+         */
+        @JavascriptInterface
+        public String getBootStatus() {
+            File f = new File(mContext.getFilesDir(), "boot_status.txt");
+            try (java.io.BufferedReader r =
+                    new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line = r.readLine();
+                return line != null ? line : "";
+            } catch (IOException e) {
+                return "";
+            }
+        }
     }
 
     public class RemoteControlInterface {
