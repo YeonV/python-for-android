@@ -79,6 +79,53 @@ public class PythonService extends Service implements Runnable {
         sProjectionResultData = null;
     }
 
+    private static volatile boolean sProjectionStopped = false;
+
+    // VERIFIED-SAFE(consumeProjectionStopped): new static method, project-
+    // specific compound name, not an @Override - cannot collide with a
+    // framework instance method under any circumstance.
+    /**
+     * True once, consumed: whether the system has reported the projection
+     * ended since the last check - see watchProjectionStop().
+     */
+    public static boolean consumeProjectionStopped() {
+        boolean stopped = sProjectionStopped;
+        sProjectionStopped = false;
+        return stopped;
+    }
+
+    // VERIFIED-SAFE(watchProjectionStop): new static method, project-specific
+    // compound name, not an @Override - cannot collide with a framework
+    // instance method under any circumstance.
+    // VERIFIED-SAFE(onStop): confirmed against AOSP source
+    // (media/java/android/media/projection/MediaProjection.java) -
+    // MediaProjection.Callback declares `public void onStop() {}`: non-final,
+    // an empty default body meant to be overridden by subclasses. Also
+    // confirmed stop() and external (status-bar) stops both dispatch onStop()
+    // identically via the system service's MediaProjectionCallback.Stub, so
+    // one override here correctly covers both causes.
+    /**
+     * Watches a live MediaProjection for the system reporting it has ended.
+     *
+     * A real Java subclass, not a pyjnius PythonJavaClass proxy:
+     * MediaProjection.Callback is an abstract CLASS, and dynamic proxies -
+     * which is how pyjnius implements Java callbacks from Python - can only
+     * implement INTERFACES, never extend a class. Python just calls this
+     * once, right after acquiring the projection.
+     */
+    public static void watchProjectionStop(
+            android.media.projection.MediaProjection projection) {
+        projection.registerCallback(
+            new android.media.projection.MediaProjection.Callback() {
+                @Override
+                public void onStop() {
+                    sProjectionStopped = true;
+                }
+            },
+            new android.os.Handler(android.os.Looper.getMainLooper())
+        );
+    }
+
     private boolean autoRestartService = false;
 
     public void setAutoRestartService(boolean restart) {
