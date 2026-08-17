@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -57,6 +58,26 @@ public class PythonService extends Service implements Runnable {
     private static int sProjectionResultCode = 0;
     private static Intent sProjectionResultData = null;
     private BroadcastReceiver projectionReceiver = null;
+
+    // VERIFIED-SAFE(wifiLock): new instance field, not an @Override - cannot
+    // collide with a framework member under any circumstance.
+    // Keeps the WiFi radio out of power-save between UDP sends to the LED
+    // controller - confirmed against AOSP docs (source.android.com/docs/
+    // core/connect/wifi-low-latency): WIFI_MODE_FULL_LOW_LATENCY was added
+    // in Android 10 (API 29); WIFI_MODE_FULL_HIGH_PERF (API 12) is the
+    // pre-29 fallback. Held for the service's whole lifetime, same as the
+    // foreground-service promotion itself.
+    private WifiManager.WifiLock wifiLock = null;
+
+    // VERIFIED-SAFE(multicastLock): new instance field, not an @Override -
+    // cannot collide with a framework member under any circumstance.
+    // Without this, Android's WiFi stack filters out multicast packets not
+    // explicitly addressed to this device - including mDNS, which LedFx's
+    // ZeroConfRunner (backend/ledfx/mdns_manager.py) uses for WLED device
+    // discovery. Requires CHANGE_WIFI_MULTICAST_STATE (distinct from
+    // WifiLock's CHANGE_WIFI_STATE), confirmed against real AOSP source
+    // (WifiManager.java, createMulticastLock/MulticastLock class).
+    private WifiManager.MulticastLock multicastLock = null;
 
     /** Activity.RESULT_OK when consent was granted, 0 when never asked. */
     public static int getMediaProjectionResultCode() {
@@ -161,6 +182,20 @@ public class PythonService extends Service implements Runnable {
             registerReceiver(projectionReceiver, filter, 4);
         } else {
             registerReceiver(projectionReceiver, filter);
+        }
+
+        WifiManager wifiManager =
+            (WifiManager) getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager != null) {
+            int lockType = (Build.VERSION.SDK_INT >= 29)
+                ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+            wifiLock = wifiManager.createWifiLock(lockType, "ledfx:udp-stream");
+            wifiLock.acquire();
+
+            multicastLock = wifiManager.createMulticastLock("ledfx:mdns-discovery");
+            multicastLock.acquire();
         }
     }
 
@@ -315,6 +350,14 @@ public class PythonService extends Service implements Runnable {
                 Log.w("python service", "projection receiver already gone");
             }
             projectionReceiver = null;
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
+            wifiLock = null;
+        }
+        if (multicastLock != null && multicastLock.isHeld()) {
+            multicastLock.release();
+            multicastLock = null;
         }
         pythonThread = null;
         if (autoRestartService && startIntent != null) {
