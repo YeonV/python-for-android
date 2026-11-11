@@ -77,8 +77,16 @@ class BroadcastReceiver(object):
 
         Handler = autoclass('android.os.Handler')
         self.handler = Handler(self.handlerthread.getLooper())
-        self.context.registerReceiver(
-            self.receiver, self.receiver_filter, None, self.handler)
+        # API 34+ rejects a receiver for non-system broadcasts unless the
+        # exported flag is given explicitly. 4 is Context.RECEIVER_NOT_EXPORTED
+        # (API 33); the receivers registered through here are app-internal.
+        Build = autoclass('android.os.Build$VERSION')
+        if Build.SDK_INT >= 33:
+            self.context.registerReceiver(
+                self.receiver, self.receiver_filter, None, self.handler, 4)
+        else:
+            self.context.registerReceiver(
+                self.receiver, self.receiver_filter, None, self.handler)
         self._is_registered = True
 
     def stop(self):

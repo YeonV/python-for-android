@@ -59,6 +59,21 @@ public class PythonService extends Service implements Runnable {
     private static Intent sProjectionResultData = null;
     private BroadcastReceiver projectionReceiver = null;
 
+    // VERIFIED-SAFE(foregroundNotification/deferredForegroundType): new
+    // instance fields, not @Overrides - cannot collide with a framework member.
+    // API 34+ refuses startForeground() with FOREGROUND_SERVICE_TYPE_MEDIA_
+    // PROJECTION until the user has approved screen capture (SecurityException
+    // "requires ... Media projection screen capture permission", seen live on
+    // Android 17). The service starts before that consent exists, so the
+    // projection bit is held back here and added with a second
+    // startForeground() call once the approved result arrives - the pattern
+    // the FGS-type docs prescribe for adding a type at runtime.
+    private Notification foregroundNotification = null;
+    private int deferredForegroundType = 0;
+
+    private static final int TYPE_MEDIA_PROJECTION =
+        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+
     // VERIFIED-SAFE(wifiLock): new instance field, not an @Override - cannot
     // collide with a framework member under any circumstance.
     // Keeps the WiFi radio out of power-save between UDP sends to the LED
@@ -168,8 +183,26 @@ public class PythonService extends Service implements Runnable {
         projectionReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                sProjectionResultCode = intent.getIntExtra("resultCode", 0);
-                sProjectionResultData = intent.getParcelableExtra("resultData");
+                int code = intent.getIntExtra("resultCode", 0);
+                Intent data = intent.getParcelableExtra("resultData");
+                // Promote the FGS type before Python can see the result, so
+                // getMediaProjection() never runs on a service that is not yet
+                // a mediaProjection foreground service.
+                if (code != 0 && data != null && deferredForegroundType != 0
+                        && foregroundNotification != null
+                        && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        startForeground(getServiceId(), foregroundNotification,
+                                        deferredForegroundType);
+                        deferredForegroundType = 0;
+                        Log.i("python service", "foreground type promoted to mediaProjection");
+                    } catch (Exception e) {
+                        Log.e("python service", "promoting foreground type failed: "
+                              + e.getMessage(), e);
+                    }
+                }
+                sProjectionResultCode = code;
+                sProjectionResultData = data;
                 Log.i("python service", "media projection received, code="
                       + sProjectionResultCode);
             }
@@ -332,7 +365,15 @@ public class PythonService extends Service implements Runnable {
             builder.setSmallIcon(smallIconId);
             notification = builder.build();
         }
+        foregroundNotification = notification;
         int foregroundServiceType = getP4AForegroundServiceType();
+        if ((foregroundServiceType & TYPE_MEDIA_PROJECTION) != 0
+                && !hasMediaProjection()) {
+            deferredForegroundType = foregroundServiceType;
+            foregroundServiceType &= ~TYPE_MEDIA_PROJECTION;
+            Log.i("python service", "no media projection consent yet, "
+                  + "starting foreground without that type");
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && foregroundServiceType != 0) {
             startForeground(getServiceId(), notification, foregroundServiceType);
         } else {
