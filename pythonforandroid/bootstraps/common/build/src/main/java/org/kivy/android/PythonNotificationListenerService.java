@@ -1,5 +1,6 @@
 package org.kivy.android;
 
+import android.content.Intent;
 import android.service.notification.NotificationListenerService;
 import android.util.Log;
 
@@ -19,6 +20,10 @@ import android.util.Log;
 public class PythonNotificationListenerService extends NotificationListenerService {
 
     private static final String TAG = "PythonNotifListener";
+
+    /** Package-scoped broadcast sent when Android connects this listener. */
+    public static final String ACTION_ACCESS_GRANTED =
+        "org.kivy.android.NOTIFICATION_ACCESS_GRANTED";
 
     /**
      * Disconnect from the notification stream as soon as the system connects
@@ -40,6 +45,14 @@ public class PythonNotificationListenerService extends NotificationListenerServi
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
+        // Android connects this listener the moment the user grants access, and
+        // announces the grant to nothing else. Forward it to the LedFx service
+        // process, whose media session watcher could not start without it.
+        try {
+            sendBroadcast(new Intent(ACTION_ACCESS_GRANTED).setPackage(getPackageName()));
+        } catch (Exception e) {
+            Log.w(TAG, "Could not announce the notification access grant", e);
+        }
         try {
             requestUnbind();
             Log.i(TAG, "Unbound from the notification stream; media session access is unaffected");
