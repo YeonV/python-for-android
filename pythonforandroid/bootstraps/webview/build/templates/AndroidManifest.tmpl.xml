@@ -31,6 +31,10 @@
     <uses-permission android:name="com.android.vending.BILLING" />
     {% endif %}
 
+    <queries>
+        <package android:name="com.ledfx.nowplaying" />
+    </queries>
+
     <!-- Create a Java class extending SDLActivity and place it in a
          directory under src matching the package, e.g.
          	src/com/gamemaker/game/MyGame.java

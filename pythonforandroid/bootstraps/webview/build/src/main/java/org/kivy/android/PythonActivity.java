@@ -582,6 +582,30 @@ public class PythonActivity extends Activity {
             }
         }
 
+        /**
+         * Whether the LedFx Now Playing addon is installed.
+         *
+         * Visible to this app only through the matching <queries> entry in the
+         * manifest; without it Android hides the package and this is always false.
+         */
+        // VERIFIED-SAFE(isNowPlayingAddonInstalled): RemoteControlInterface
+        // extends no framework class, and the getPackageInfo calls are the same
+        // two overloads getAppVersion() above already compiles with in CI.
+        @JavascriptInterface
+        public boolean isNowPlayingAddonInstalled() {
+            try {
+                PackageManager pm = PythonActivity.mActivity.getPackageManager();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.getPackageInfo("com.ledfx.nowplaying", PackageManager.PackageInfoFlags.of(0));
+                } else {
+                    pm.getPackageInfo("com.ledfx.nowplaying", 0);
+                }
+                return true;
+            } catch (PackageManager.NameNotFoundException e) {
+                return false;
+            }
+        }
+
         @JavascriptInterface
         public void exitApp() {
             Log.i(TAG, "exitApp called from JavaScript - terminating app");
