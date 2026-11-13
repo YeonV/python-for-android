@@ -89,30 +89,6 @@
                  android:process=":service_{{ name }}" />
         {% endfor %}
 
-        <!-- Lets the app appear under Settings > Notification access. Granting
-             it is what permits MediaSessionManager.getActiveSessions(), so
-             Python can read the active media session through pyjnius. The
-             service reads nothing itself and is never bound until granted. -->
-        <service android:name="org.kivy.android.PythonNotificationListenerService"
-                 android:label="@string/app_name"
-                 android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-                 android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-            <!-- All 4 sub-category checkboxes on the notification-access grant
-                 screen default to checked otherwise. Now Playing only ever
-                 reads the active media session (a MediaSessionManager call,
-                 not the listener stream itself) - "ongoing" is what Android
-                 categorizes an active-app/media/navigation notification as,
-                 the only one this actually needs. Unverified against a single
-                 canonical source (Android's own docs page for this didn't
-                 have it); cross-corroborated across two independent searches
-                 instead - confirm on-device once a build carries this. -->
-            <meta-data android:name="android.service.notification.default_filter_types"
-                       android:value="ongoing" />
-        </service>
-
         {% if args.billing_pubkey %}
         <service android:name="org.kivy.android.billing.BillingReceiver"
                  android:process=":pythonbilling" />
